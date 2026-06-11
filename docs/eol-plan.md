@@ -138,3 +138,5 @@ Filled in as repos are retired. One row per repo.
 | `ethercomms` | L2 ethernet comms helper | — (use `mdlayher/raw`) | archived | 2026-06-11 |
 | `linkperf` | link perf (template stub) | — | archived | 2026-06-11 |
 | `goping` | async ICMP pinger | sleep-spin idea → [schedulers](blueprints/schedulers.md) | archived | 2026-06-11 |
+| `loadly` | HTTP stress-test stub (local-only, never pushed) | — | deleted | 2026-06-11 |
+| `sshsim` | ssh-session sim scratch (no git) | — | deleted | 2026-06-11 |
