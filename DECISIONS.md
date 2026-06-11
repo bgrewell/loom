@@ -118,3 +118,21 @@ Open: also expose a Go builder API for programmatic scenarios? HCL? **Pending.**
 
 Stream telemetry over the existing control-plane gRPC connection, or a separate
 channel so it never competes with control RPCs? **Pending.**
+
+---
+
+### Decided after the initial draft
+
+## ADR-0014 — Simple auth, not RBAC
+**Status:** Accepted · **Date:** 2026-06-10
+
+**Context.** §8 originally floated per-RPC authorization / RBAC for the control
+plane. For a traffic-test fabric — infrastructure you own, driving agents you
+deployed — role-based access control is complexity without a matching need.
+**Decision.** Keep control-plane security simple: an optional shared
+auth/enrollment token plus optional mTLS for transport encryption and identity.
+Authenticate the connection, then trust it. No roles, no per-RPC permission
+matrix.
+**Consequences.** Much less to build and operate. Not foreclosed — if a genuine
+multi-tenant shared testbed ever needs per-team isolation, RBAC can be layered on
+then. Supersedes the RBAC bullet that was in DESIGN.md §8.

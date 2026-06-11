@@ -80,7 +80,7 @@ These are the stated must-haves driving the design:
 | 6 | datapath layers | `Datapath` backends: `socket` / `afpacket` / `afxdp` / `dpdk` |
 | 7 | streaming + final reporting | `Reporter` + sinks; interval samples + final stats engine |
 | 8 | dedicated control plane | gRPC control service on its own connection, separate from data |
-| 9 | optional security | mTLS + enrollment tokens + per-RPC authz, off by default |
+| 9 | optional security | enrollment/auth token + optional mTLS, off by default — no RBAC |
 | 10 | emulation | `Emulation` generators compiled from a behavior-script primitive |
 | 11 | name | `loom` (weaving many flows into one fabric) — provisional |
 | 12 | Linux only | Free use of AF_XDP/AF_PACKET, `x/sys/unix`, NIC timestamping |
@@ -97,7 +97,7 @@ adapter.
                 ┌──────────── adapters (no core logic) ────────────┐
    CLI (cobra)  REST / gRPC-gateway API   Web dashboard   loomctl
                 └───────────────────────┬──────────────────────────┘
-                                        │  control plane (gRPC + optional mTLS/authz)
+                                        │  control plane (gRPC + optional mTLS / token auth)
         ┌───────────────────────────────┼───────────────────────────────┐
    Controller / Orchestrator            │                    Agent (loomd) × N
    - parse Scenario + Timeline          │   Register / Caps / Configure / Arm
@@ -271,27 +271,34 @@ sockets or NICs with the data plane.
 Agents are **symmetric** — any agent can be the client or the server/reflector
 side of a given flow, decided per-flow by the controller.
 
-**Optional security** (off in lab, on in production; pluggable so it's genuinely
-optional):
+**Optional security** — off by default for lab use, switched on for shared or
+production environments. The model is deliberately simple: **authenticate the
+connection, then trust it.** No role hierarchies, no per-RPC permission matrix.
 
-- mTLS between controller ↔ agents
-- agent enrollment via a join token
-- per-RPC authorization / RBAC
-- audit logging of control actions
+- a shared **auth / enrollment token** an agent presents to join a controller, and
+- optional **mTLS** for transport encryption and certificate-based identity.
+
+Fine-grained access control (RBAC) is explicitly out of scope — it's complexity a
+traffic-test fabric of agents you already own doesn't need, and it can be layered
+on later if a multi-tenant shared testbed ever demands it
+(see [ADR-0014](DECISIONS.md#adr-0014--simple-auth-not-rbac)).
 
 ## 9. Orchestration: scenarios & timeline
 
-Two clearly-separated scheduling levels:
+"Scheduling" means two different things in a traffic tool, and blurring them is
+how earlier attempts got muddled. loom keeps them distinct:
 
-- **Scheduler** (§5.2) — *intra-flow* pacing.
-- **Timeline** — *inter-flow* conductor: when flows start/stop, recurrence,
-  jitter, and overlap.
+- **Scheduler** (§5.2) — *micro*: paces packets **within** one flow (rate,
+  inter-packet timing).
+- **Timeline** — *macro*: choreographs flows **relative to each other** across a
+  run — when each starts and stops, how often it recurs, and how they overlap.
 
-A **Scenario** (YAML) declares endpoints, defaults, and a timeline of events.
-This is where requirement 14 lives. The full grammar — value/distribution forms,
-selectors, triggers, stop conditions, flow kinds — is in
-[docs/scenario-schema.md](docs/scenario-schema.md). The user's three example
-flows, encoded:
+A **Scenario** (YAML) is that macro description: the endpoints traffic runs
+between, plus a timeline of events over them. It's where requirement 14 — overlap
+and randomized timing — lives. The full grammar (value/distribution forms,
+selectors, triggers, stop conditions, flow kinds) is in
+[docs/scenario-schema.md](docs/scenario-schema.md). The three example flows from
+our discussion, encoded:
 
 ```yaml
 scenario: branch-office-mix
@@ -328,14 +335,16 @@ timeline:
     stop:  { volume: 123MB }
 ```
 
-**Trigger types:** `at` / `+offset` (absolute / relative), `repeat { interval:
-range, jitter }` (recurring with randomness), `for N` / `every N`.
-**Stop conditions:** `after: duration` · `volume: bytes` · `count: packets` ·
-`end-of-test`. Overlap is implicit — each event spawns independent flows.
-
-**Endpoint selection:** `oneOf` / `allOf` modes + tag expressions, e.g.
-`from: tags(all(10g, win))`, `to: tags(any(40g, 10g))`, with client≠server
-exclusion so a node never talks to itself by accident.
+**Triggers:** `at` / `+offset` (absolute or relative start), `repeat { interval,
+jitter }` (recurring, with randomness drawn from the value grammar), `for N` /
+`every N`.
+**Stop conditions:** `after: <duration>` · `volume: <bytes>` · `count: <packets>`
+· `end-of-test`.
+**Overlap is the default, not a special case:** events are independent, so any
+number of flows can be live at once — that's the entire point of a timeline.
+**Endpoint selection:** `oneOf` / `allOf` / `any` modes and tag expressions
+(`from: tags(all(10g, linux))`, `to: tags(any(40g, 10g))`), with automatic
+client ≠ server exclusion so a node never picks itself for both ends.
 
 ## 10. Traffic emulation
 
@@ -357,22 +366,27 @@ transport.
 
 ## 11. Roles & topology
 
-One core, four roles:
+One core library, wearing four hats. Only the **agent** ever touches the wire;
+every other role coordinates.
 
-- **Agent (`loomd`)** — runs on each node (think 100 systems). Executes flows,
-  exposes datapaths/capabilities, streams telemetry. Symmetric, headless,
-  minimal dependencies.
-- **Controller / Orchestrator** — owns a Scenario, drives N agents, arms the
-  timeline, aggregates results.
-- **CLI (`loom`)** — drives the controller; **or** runs the iperf-esque quick
-  test directly (ephemeral local agent + one remote, streaming + summary, no
-  scenario file).
-- **Web / API** — live dashboard of all flows/agents + a REST / gRPC-gateway API;
-  read-mostly, talks to the controller.
+- **Agent (`loomd`)** — runs on each node under test (think 100 systems). It is
+  the only component that generates and measures traffic: it executes flows,
+  advertises its datapath capabilities, and streams telemetry back. Headless,
+  minimal dependencies, and **symmetric** — the controller decides per-flow
+  whether a given agent is the sender or the receiver/reflector.
+- **Controller** — the brain. It loads a Scenario, resolves endpoint selection,
+  distributes flow specs to the relevant agents, arms and runs the timeline, and
+  aggregates their telemetry. It holds no data-plane state of its own.
+- **CLI (`loom`)** — the primary human interface. It drives a controller for full
+  scenarios, **or** runs the iperf-esque quick test on its own (below).
+- **Web / API** — a live view of every agent and flow, plus a REST / gRPC-gateway
+  API for automation. Read-mostly: it observes through the controller, it doesn't
+  bypass it.
 
-**iperf-esque mode** is just the degenerate case of the full system: one
-controller-less command spins an ephemeral local agent + a remote agent, runs a
-single flow, and prints streaming + summary.
+**iperf-esque mode** is just the whole system collapsed to its smallest form: a
+single `loom` command stands up an ephemeral local agent, talks to one remote
+agent, runs one flow, and prints streaming + final numbers — no controller, no
+scenario file. Same engine, fewer moving parts.
 
 ## 12. Repository layout
 

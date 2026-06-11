@@ -105,8 +105,9 @@ Omitting `repeat` ⇒ the event fires once at `start`.
 | volume | `{ volume: 123MB }` | run until N bytes transferred |
 | count | `{ count: 10000 }` | run until N packets/requests |
 
-**Overlap is implicit:** events are independent; many can be live at once. Two
-events with overlapping `[start, stop]` windows simply run concurrently.
+**Overlap is the default:** events are independent, so any number run
+concurrently — two events with overlapping `[start, stop]` windows simply
+coexist. There is no implicit serialization to opt out of.
 
 ## Flow
 
