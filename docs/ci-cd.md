@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest          # or self-hosted with lxd
     steps:
       - uses: actions/checkout@v4
-      - run: go install github.com/bgrewell/dart/cmd/dart@latest
+      - run: curl -sSL https://raw.githubusercontent.com/bgrewell/dart/main/install.sh | bash
       - run: dart -c tests/lxd/two-node-tcp.yaml
 
   performance:

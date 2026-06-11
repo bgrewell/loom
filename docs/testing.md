@@ -79,6 +79,23 @@ tests/
 - DART asserts via `match` / `contains` / `exit_code`; numeric perf thresholds
   use a small comparator step invoked from the suite (Tier 5).
 
+**Working within DART's real surface** (per the `dart` skill — DART is
+deliberately minimal, and several features its docs advertise aren't
+implemented):
+
+- Only the **`execute`** test type exists; assertions are only **`exit_code` /
+  `match` / `contains`** — no regex, negation, or numeric comparison. So every
+  perf threshold is enforced by a **comparator script** the test runs, asserting
+  `exit_code: 0` (Tier 5); DART itself never compares numbers.
+- The `execute` step **ignores `timeout:`** — bake `timeout N …` into the
+  command.
+- **One `local` node** per suite; fan a test across hosts with `node: [a, b, c]`.
+- **Node facts** (`{{ fact "<node>" "<name>" }}`) capture a command's output for
+  reuse elsewhere in the suite — handy for pulling an interface/IP/host detail.
+- Large suites split sections across directories via **`!!load_from(<dir>)`**
+  (recursive, lexically-ordered fragments prefixed `00_`, `01_`); the `lxd/` and
+  `physical/` trees above adopt that layout as they grow.
+
 ## Tier 5 — Performance regression
 
 Why physical hosts exist: catch perf regressions a container can't show.
