@@ -1,8 +1,8 @@
 # loom
 
-> **Status: planning / RFC.** No code yet — this repo currently holds a design
-> document we're iterating on. The name `loom` is **provisional** (see
-> [Open Decisions](DESIGN.md#13-open-decisions)).
+> **Status: planning / RFC.** No code yet — this repo currently holds the design
+> docs we're iterating on. Decisions are recorded in
+> [DECISIONS.md](DECISIONS.md); the name is settled as **loom**.
 
 **loom** is a modern, distributed network **traffic generation and measurement**
 system for Linux. It weaves many independent traffic flows — raw protocols and
@@ -36,3 +36,7 @@ doc.
 This grew out of an audit of ~35 prior projects (tgams, traffic, blaster, bperf,
 nperfmon, packet, and many more). [DESIGN.md, Appendix A](DESIGN.md#appendix-a--harvest-map)
 records exactly which working pieces we plan to lift from where.
+
+## License
+
+[Apache-2.0](LICENSE).
