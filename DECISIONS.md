@@ -105,12 +105,14 @@ OWD + NIC hardware timestamping land in phase 4, but the **TimeSync** service an
 the **datapath capability model** are built from day one so adding OWD is not a
 retrofit. Software RTT/jitter ships earlier.
 
-## ADR-0011 — License (still open)
-**Status:** Proposed · **Date:** 2026-06-10
+## ADR-0011 — License: Apache-2.0
+**Status:** Accepted · **Date:** 2026-06-11
 
-**TBD** — to be decided before the first public code/release. Prior repos lean
-BSD-2; MIT and Apache-2.0 (explicit patent grant) are the other candidates. This
-is the **one remaining open ADR.**
+**Apache-2.0** — chosen for its explicit **patent grant** and patent-retaliation
+clause, which matter in a patent-dense domain (networking) and once the project
+takes outside contributions. BSD-2 and MIT were the alternatives (simpler, but no
+patent protection). `LICENSE` is in the repo; source files will carry the standard
+Apache header once code lands.
 
 ## ADR-0012 — Config surface: YAML + Go builder API
 **Status:** Accepted · **Date:** 2026-06-11

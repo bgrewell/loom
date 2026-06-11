@@ -36,3 +36,7 @@ doc.
 This grew out of an audit of ~35 prior projects (tgams, traffic, blaster, bperf,
 nperfmon, packet, and many more). [DESIGN.md, Appendix A](DESIGN.md#appendix-a--harvest-map)
 records exactly which working pieces we plan to lift from where.
+
+## License
+
+[Apache-2.0](LICENSE).

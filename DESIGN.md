@@ -435,12 +435,12 @@ Settled — recorded as ADRs in [DECISIONS.md](DECISIONS.md):
 | 0008 | MVP datapath | **socket** first; `afxdp` in phase 3 |
 | 0009 | Binary topology | separate `loom`/`loomd`/`loomctl`, one module |
 | 0010 | OWD / HW timestamping | later phase; TimeSync + capability seams day one |
+| 0011 | License | **Apache-2.0** (explicit patent grant) |
 | 0012 | Config surface | YAML + Go builder API |
 | 0013 | Telemetry transport | separate channel (never competes with control) |
 | 0017 | CLI framework | **stencil** |
 
-**Still open:** ADR-0011 **License** — TBD before first public release
-(BSD-2 / MIT / Apache-2.0).
+All open ADRs are now settled.
 
 ## 14. Phasing / roadmap
 
