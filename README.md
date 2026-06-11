@@ -1,8 +1,8 @@
 # loom
 
-> **Status: planning / RFC.** No code yet — this repo currently holds the design
-> docs we're iterating on. Decisions are recorded in
-> [DECISIONS.md](DECISIONS.md); the name is settled as **loom**.
+> **Status: phase 1 in progress.** The design is settled
+> ([DESIGN.md](DESIGN.md) / [DECISIONS.md](DECISIONS.md)); the `core/` scaffold and
+> the `loom` CLI are taking shape. Apache-2.0.
 
 **loom** is a modern, distributed network **traffic generation and measurement**
 system for Linux. It weaves many independent traffic flows — raw protocols and

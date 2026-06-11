@@ -1,0 +1,49 @@
+suite: loom CLI smoke
+
+# Builds the loom CLI and checks its basic surface. Runs on the local machine;
+# no agents or network required. See docs/testing.md (Tier 4).
+
+nodes:
+  - name: local
+    type: local
+    options:
+      shell: /bin/bash
+
+setup:
+  - name: build loom
+    node: local
+    step:
+      type: execute
+      options:
+        command: |
+          set -euo pipefail
+          REPO="$(git rev-parse --show-toplevel)"
+          mkdir -p /tmp/loom-smoke
+          cd "$REPO"
+          go build -o /tmp/loom-smoke/loom ./cmd/loom
+          test -x /tmp/loom-smoke/loom
+
+tests:
+  - name: version prints the product name
+    node: local
+    type: execute
+    options:
+      command: /tmp/loom-smoke/loom --version 2>&1
+      evaluate:
+        contains: "loom"
+
+  - name: help describes the tool
+    node: local
+    type: execute
+    options:
+      command: /tmp/loom-smoke/loom --help 2>&1
+      evaluate:
+        contains: "traffic generation"
+
+teardown:
+  - name: cleanup
+    node: local
+    step:
+      type: execute
+      options:
+        command: rm -rf /tmp/loom-smoke
