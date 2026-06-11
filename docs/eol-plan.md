@@ -140,3 +140,17 @@ Filled in as repos are retired. One row per repo.
 | `goping` | async ICMP pinger | sleep-spin idea → [schedulers](blueprints/schedulers.md) | archived | 2026-06-11 |
 | `loadly` | HTTP stress-test stub (local-only, never pushed) | — | deleted | 2026-06-11 |
 | `sshsim` | ssh-session sim scratch (no git) | — | deleted | 2026-06-11 |
+| `traffic` | synthetic-traffic framework | [traffic-engine](blueprints/traffic-engine.md), [emulation](blueprints/emulation.md), [dynamic-webserver](blueprints/dynamic-webserver.md) | archived | 2026-06-11 |
+| `blaster` | tcp/udp gen library | [schedulers](blueprints/schedulers.md) | archived | 2026-06-11 |
+| `bperf` | perf tool | [payloaders](blueprints/payloaders.md), [control-plane](blueprints/control-plane.md) | archived | 2026-06-11 |
+| `loader` | generic load generator | [schedulers](blueprints/schedulers.md) | archived | 2026-06-11 |
+| `nperfmon` | network perf monitor (under `bengrewell`) | [latency-probe](blueprints/latency-probe.md) | **pending — needs `bengrewell` access** | — |
+| `packet` | packet I/O library | [datapath-backends](blueprints/datapath-backends.md) | archived | 2026-06-11 |
+| `NetworkPerformanceAnalyzer` | latency/loss analyzer | [stats-engine](blueprints/stats-engine.md) | archived | 2026-06-11 |
+| `anapp` | app perf profiler / gen | [control-plane](blueprints/control-plane.md), [accounting](blueprints/accounting.md) | archived | 2026-06-11 |
+| `basicHWTimestamps` | NIC HW-timestamp spike | [hw-timestamping](blueprints/hw-timestamping.md) | archived | 2026-06-11 |
+| `quantify` | one-way latency (HW ts) | [hw-timestamping](blueprints/hw-timestamping.md) (RX ref) | archived | 2026-06-11 |
+| `perspective` | telemetry/sensor platform | poll→fan-in (DESIGN §11 ref) | archived | 2026-06-11 |
+| `PacketCraft` | packet-crafting library | checksum snippet (harvest map) | archived | 2026-06-11 |
+| `goperf` | native iperf-like perf tool | native-gen interface (harvest-map ref) | archived | 2026-06-11 |
+| `conductor-plugin-udpsender` | udp sender plugin | plugin-registry (harvest-map ref) | archived | 2026-06-11 |
