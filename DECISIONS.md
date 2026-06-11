@@ -121,7 +121,7 @@ channel so it never competes with control RPCs? **Pending.**
 
 ---
 
-### Decided after the initial draft
+### Added after the initial draft
 
 ## ADR-0014 — Simple auth, not RBAC
 **Status:** Accepted · **Date:** 2026-06-10
@@ -136,3 +136,42 @@ matrix.
 **Consequences.** Much less to build and operate. Not foreclosed — if a genuine
 multi-tenant shared testbed ever needs per-team isolation, RBAC can be layered on
 then. Supersedes the RBAC bullet that was in DESIGN.md §8.
+
+## ADR-0015 — Tests and CI from the first commit
+**Status:** Accepted · **Date:** 2026-06-10
+
+**Context.** Prior projects bolted tests on late (or never), so regressions and
+half-built subsystems hid for years.
+**Decision.** Five test tiers ship with the code from day one — unit
+(table-driven, coverage-gated), interface contract/conformance suites, benchmarks
+with hot-path alloc gates, and [DART](https://github.com/bgrewell/dart)
+integration suites (LXD + physical). A first-class in-memory datapath makes the
+full engine unit-testable without NICs. CI runs the gate on every PR. See
+[docs/testing.md](docs/testing.md).
+**Consequences.** Slower very first commits; far cheaper everything after.
+Testability constrains the architecture (interfaces, injected clocks/RNG) — which
+we wanted anyway.
+
+## ADR-0016 — Performance regression gating on a physical testbed
+**Status:** Accepted · **Date:** 2026-06-10
+
+**Context.** A traffic tool's correctness includes its *numbers*; a 28 %
+throughput drop is a regression even when every functional test still passes.
+**Decision.** Self-hosted runners on physical hosts run real-NIC DART suites,
+capture throughput/latency/loss, and compare against committed baselines (median +
+tolerance) per `(host-pair, scenario, datapath)`. Outside tolerance = CI failure +
+a PR comment with the delta; results also go to a trend store for bisecting.
+Baselines change only via an explaining PR. See [docs/ci-cd.md](docs/ci-cd.md).
+**Consequences.** Needs a maintained testbed and self-hosted runners. Catches the
+exact class of regression (12,476 → 8,932 Mbps) that unit/LXD tests can't.
+
+## ADR-0017 — CLI built on `stencil`
+**Status:** Proposed (recommended) · **Date:** 2026-06-10
+
+**Context.** The CLI adapter needs a command/flag framework.
+`github.com/bgrewell/stencil` is the house framework (used by sshwiz, testbox,
+smart-gateway), has a Claude skill, and provides the build-time version injection
+the release flow (ADR-0016) already assumes.
+**Decision (proposed).** Build the `loom` CLI on `stencil` and use its dev-CLI for
+version/build metadata. Alternative: cobra. **Pending confirmation.**
+**Consequences.** Ecosystem consistency; one fewer per-repo decision.

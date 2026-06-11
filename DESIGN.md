@@ -24,6 +24,7 @@
 12. [Repository layout](#12-repository-layout)
 13. [Open decisions](#13-open-decisions)
 14. [Phasing / roadmap](#14-phasing--roadmap)
+15. [Testing, CI/CD & performance regression](#15-testing-cicd--performance-regression)
 - [Appendix A — Harvest map](#appendix-a--harvest-map)
 - [Appendix B — Glossary](#appendix-b--glossary)
 
@@ -144,6 +145,7 @@ ring.
 | `afpacket` | AF_PACKET v3 (TPACKET ring) | raw L2/L3, moderate rate | pure Go (`x/sys`) |
 | `afxdp` | AF_XDP + XDP/eBPF, zero-copy | high pps, line-rate | build tag |
 | `dpdk` | kernel-bypass PMD | extreme rate, dedicated NIC | cgo + build tag |
+| `memory` | in-process loopback (no kernel) | unit/integration tests, deterministic | pure Go |
 
 Each backend advertises a **capability set** — raw L2? hardware timestamping?
 rate offload? max pps? — so the orchestrator can pick/validate a datapath per
@@ -400,7 +402,7 @@ loom/
     loomctl/     # controller / orchestrator   (or fold into a --role flag)
     loomweb/     # web/dashboard server
   core/
-    datapath/{socket,afpacket,afxdp,dpdk}/   # afxdp, dpdk behind build tags
+    datapath/{socket,afpacket,afxdp,dpdk,memory}/  # afxdp,dpdk build-tagged; memory = tests
     pump/
     scheduler/
     generator/{tcp,udp,icmp,quic,emul}/
@@ -415,6 +417,8 @@ loom/
   api/           # REST / gRPC-gateway
   web/           # frontend
   proto/
+  tests/         # DART integration suites (lxd + physical testbed) + baselines
+  .github/workflows/   # CI pipelines
 ```
 
 Build tags isolate heavy/cgo backends (`dpdk`, `afxdp`) so the **default build is
@@ -444,13 +448,74 @@ Tracked as ADRs in [DECISIONS.md](DECISIONS.md).
 
 1. **MVP / iperf-esque** — core + `socket` datapath + token/soak schedulers +
    tcp/udp generators + accounting + latency + streaming/summary reporter +
-   single CLI command.
+   single CLI command. Tests and CI land **with** this code, not after: unit +
+   contract suites, the in-memory datapath, and the CI skeleton (§15).
 2. **Distributed** — control plane + agent/controller + TimeSync + Scenario /
    Timeline engine + multi-point selection.
 3. **Emulations + datapaths** — https/voip/ssh/prom/ftp; `afpacket` → `afxdp`;
    web dashboard.
 4. **Advanced** — one-way delay + HW timestamping; DPDK; control-plane security;
    trace-replay scheduler.
+
+The physical-host DART + performance tier (§15) comes online with phase 2
+(multi-host) and grows as datapaths and emulations land.
+
+---
+
+## 15. Testing, CI/CD & performance regression
+
+Tests and CI are **part of "done" from the first commit**, not a later phase. The
+hexagonal core (§4) exists partly to make this cheap: with the datapath,
+scheduler, and generator behind interfaces, the whole engine runs in-process
+against an **in-memory datapath** (§5.1) — no NICs, no root, fully deterministic
+via the scenario `seed`. Real hardware is exercised separately on a physical
+testbed. Full detail: [docs/testing.md](docs/testing.md),
+[docs/ci-cd.md](docs/ci-cd.md).
+
+### Test tiers
+
+1. **Unit** — table-driven (happy / error / boundary), deterministic, no network.
+   Complete coverage of core *logic*; a coverage gate fails CI below threshold.
+   `-race` is mandatory.
+2. **Contract / conformance** — one shared suite every `Datapath`, `Scheduler`,
+   and `Generator` implementation must pass, so registry plugins can't drift from
+   the interface contract.
+3. **Benchmarks + alloc gates** — hot-path microbenchmarks assert **0 allocs/op**
+   on the pump inner loop and feed `benchstat` regression comparison. This is
+   where §6 is *enforced*: "toggling logging must not move the achieved rate or
+   pacing" is a benchmark, not a hope.
+4. **Integration (DART)** — [DART](https://github.com/bgrewell/dart) YAML suites
+   drive real `loom`/`loomd` binaries end to end. Two tiers: cheap **LXD** suites
+   on cloud CI for correctness, and **physical-host** suites on the testbed for
+   real NICs and rates.
+5. **Performance regression** — the testbed captures throughput / latency / loss
+   for known scenarios and compares against committed baselines (below).
+
+### Performance regression detection
+
+The reason physical-host integration exists: catch *performance* regressions, not
+just *correctness* ones. The thing we want surfaced automatically:
+
+> **tcp-100g / socket** throughput **down 28.4 %: 12,476 → 8,932 Mbps**
+> (baseline 12,476 ± 5 %) — **FAIL**
+
+- Each perf scenario has a committed **baseline** (median of N runs) per
+  `(host-pair, scenario, datapath)`, with a **tolerance** band.
+- A run outside tolerance fails the job and posts the delta as a PR comment.
+- Results also go to a **trend store** so regressions can be bisected and
+  improvements stay visible over time.
+- Baselines change only via a PR that explains why — never silently (a silent
+  bump hides exactly the regressions this tier exists to catch).
+
+### CI/CD
+
+Cloud runners: lint/vet → unit + race + coverage gate → build matrix (pure-Go
+default; `afxdp`/`dpdk` build-tag compile checks) → benchmarks + benchstat →
+LXD DART. **Self-hosted runners on the physical testbed** (labeled, e.g.
+`loom-testbed`, `nic-100g`, `xdp-capable`) run the physical DART + performance
+tier on merge/nightly/release. Required status checks gate merges to `main`.
+Release builds inject version metadata (via the `stencil` dev-CLI, consistent
+with the other repos) and publish the `loom` / `loomd` artifacts.
 
 ---
 
