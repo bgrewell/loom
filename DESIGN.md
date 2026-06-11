@@ -524,7 +524,9 @@ with the other repos) and publish the `loom` / `loomd` artifacts.
 This project consolidates ~35 prior repos. Rather than port wholesale, we lift
 specific working pieces. (`HARVEST` = take the code; `REFERENCE` = port the
 design; `FRESH` = build new.) File:line pointers are into the source repos as
-audited.
+audited. The process for turning these into reusable
+[blueprints](docs/blueprints/) and then retiring the source repos is in
+[docs/eol-plan.md](docs/eol-plan.md).
 
 | Component | Action | Source |
 |---|---|---|

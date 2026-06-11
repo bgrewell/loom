@@ -175,3 +175,20 @@ the release flow (ADR-0016) already assumes.
 **Decision (proposed).** Build the `loom` CLI on `stencil` and use its dev-CLI for
 version/build metadata. Alternative: cobra. **Pending confirmation.**
 **Consequences.** Ecosystem consistency; one fewer per-repo decision.
+
+## ADR-0018 — Extract to blueprints, then archive (don't delete) the old repos
+**Status:** Accepted · **Date:** 2026-06-10
+
+**Context.** ~30 prior traffic/measurement repos hold scattered useful ideas but
+are superseded by loom. We don't want to lose the knowledge or keep 30 dead repos
+cluttering the account.
+**Decision.** Extract the useful ideas into loom **blueprints** and **snippets**
+first; then `gh repo archive` each source repo (read-only, with an EOL notice in
+its README pointing to loom). Delete only local-only scratch with nothing worth
+keeping. Keep active tooling (`dart`, `stencil`, `go-conversions`,
+`claude-skills`). `go-iperf`/`go-libiperf` and the WAN-emulation cluster are
+decided separately. Full process and disposition in
+[docs/eol-plan.md](docs/eol-plan.md).
+**Consequences.** Knowledge is preserved independent of the archived repos;
+harvest-map `file:line` links keep resolving; git history is retained; the
+account gets a clean read-only attic instead of a graveyard.
