@@ -38,13 +38,13 @@ Source repos + author + license note (relicense under loom's license).
 
 | Blueprint | Capability | Primary source(s) | Status |
 |---|---|---|---|
-| [schedulers](schedulers.md) | rate / pacing strategies | blaster, loader | drafted (example) |
-| payloaders | flow data generation | bperf | todo |
-| accounting | throughput from byte counters | anapp (concept) + fresh | todo |
-| latency-probe | latency/jitter/loss sampling | nperfmon | todo |
-| stats-engine | avg/stddev/CoV/loss/dup math | NetworkPerformanceAnalyzer | todo |
-| datapath-backends | socket / afpacket / afxdp / dpdk | packet | todo |
-| hw-timestamping | NIC TX/RX hardware timestamps | basicHWTimestamps, quantify | todo |
+| [schedulers](schedulers.md) | rate / pacing strategies | blaster, loader | drafted |
+| [payloaders](payloaders.md) | flow data generation | bperf | drafted |
+| [accounting](accounting.md) | throughput from byte counters | anapp (concept) + fresh | drafted |
+| [latency-probe](latency-probe.md) | latency/jitter/loss sampling | nperfmon | drafted |
+| [stats-engine](stats-engine.md) | avg/stddev/CoV/loss/dup math | NetworkPerformanceAnalyzer | drafted |
+| [datapath-backends](datapath-backends.md) | socket / afpacket / afxdp / dpdk | packet | drafted |
+| [hw-timestamping](hw-timestamping.md) | NIC TX/RX hardware timestamps | basicHWTimestamps, quantify | drafted |
 | traffic-engine | flow/endpoint/orchestrator model | traffic | todo |
 | control-plane | agent lifecycle proto + handshake | anapp, bperf | todo |
 | emulation | app behavior-script primitive | traffic (+ new) | todo |
