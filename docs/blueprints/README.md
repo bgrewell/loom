@@ -45,10 +45,10 @@ Source repos + author + license note (relicense under loom's license).
 | [stats-engine](stats-engine.md) | avg/stddev/CoV/loss/dup math | NetworkPerformanceAnalyzer | drafted |
 | [datapath-backends](datapath-backends.md) | socket / afpacket / afxdp / dpdk | packet | drafted |
 | [hw-timestamping](hw-timestamping.md) | NIC TX/RX hardware timestamps | basicHWTimestamps, quantify | drafted |
-| traffic-engine | flow/endpoint/orchestrator model | traffic | todo |
-| control-plane | agent lifecycle proto + handshake | anapp, bperf | todo |
-| emulation | app behavior-script primitive | traffic (+ new) | todo |
-| dynamic-webserver | random page-size HTTP matrix | traffic | todo |
+| [traffic-engine](traffic-engine.md) | flow/endpoint/orchestrator model | traffic | drafted |
+| [control-plane](control-plane.md) | agent lifecycle proto + handshake | anapp, bperf | drafted |
+| [emulation](emulation.md) | app behavior-script primitive | traffic (+ new) | drafted |
+| [dynamic-webserver](dynamic-webserver.md) | random page-size HTTP matrix | traffic | drafted |
 
 ## Snippets
 
