@@ -288,7 +288,10 @@ Two clearly-separated scheduling levels:
   jitter, and overlap.
 
 A **Scenario** (YAML) declares endpoints, defaults, and a timeline of events.
-This is where requirement 14 lives. The user's three example flows, encoded:
+This is where requirement 14 lives. The full grammar — value/distribution forms,
+selectors, triggers, stop conditions, flow kinds — is in
+[docs/scenario-schema.md](docs/scenario-schema.md). The user's three example
+flows, encoded:
 
 ```yaml
 scenario: branch-office-mix
@@ -407,6 +410,7 @@ agent small.
 ## 13. Open decisions
 
 These are the forks worth settling before/while we build. **Add your take inline.**
+Tracked as ADRs in [DECISIONS.md](DECISIONS.md).
 
 1. **Name.** `loom` (provisional) vs **Conflux** (streams converging) /
    **Sluice** (gated flow) / **Weft** (the woven thread). Repo renames are one
