@@ -79,22 +79,25 @@ tests/
 - DART asserts via `match` / `contains` / `exit_code`; numeric perf thresholds
   use a small comparator step invoked from the suite (Tier 5).
 
-**Working within DART's real surface** (per the `dart` skill — DART is
-deliberately minimal, and several features its docs advertise aren't
-implemented):
+**DART features loom leans on.** DART and loom co-evolve — DART is reaching parity
+with its design docs, and where loom needs a generally-useful capability that
+isn't there yet, we file an issue rather than work around it:
 
-- Only the **`execute`** test type exists; assertions are only **`exit_code` /
-  `match` / `contains`** — no regex, negation, or numeric comparison. So every
-  perf threshold is enforced by a **comparator script** the test runs, asserting
-  `exit_code: 0` (Tier 5); DART itself never compares numbers.
-- The `execute` step **ignores `timeout:`** — bake `timeout N …` into the
-  command.
-- **One `local` node** per suite; fan a test across hosts with `node: [a, b, c]`.
-- **Node facts** (`{{ fact "<node>" "<name>" }}`) capture a command's output for
-  reuse elsewhere in the suite — handy for pulling an interface/IP/host detail.
-- Large suites split sections across directories via **`!!load_from(<dir>)`**
-  (recursive, lexically-ordered fragments prefixed `00_`, `01_`); the `lxd/` and
-  `physical/` trees above adopt that layout as they grow.
+- **Numeric / threshold assertions with tolerance** — perf gates are expressed
+  natively, e.g. `throughput_mbps: { within: 12476, tolerance_pct: 5 }`, against a
+  value extracted from loom's JSON report. Filed as
+  [bgrewell/dart#41](https://github.com/bgrewell/dart/issues/41); an interim
+  comparator step asserting `exit_code: 0` does the same job until it lands.
+- **Richer test types** — `http_request`, `port_check`, `ping` for control-plane
+  and emulation checks (tracked in
+  [bgrewell/dart#37](https://github.com/bgrewell/dart/issues/37)).
+- **Node facts** (`{{ fact "<node>" "<name>" }}`) to capture an interface/IP/host
+  detail and reuse it across a suite.
+- **Multi-node fan-out** (`node: [a, b, c]`) and **`!!load_from(<dir>)`** directory
+  layout for the larger `lxd/` and `physical/` suites.
+
+If loom turns up another DART gap that's broadly useful, the move is the same:
+file it on DART and let the projects grow together.
 
 ## Tier 5 — Performance regression
 
@@ -110,8 +113,12 @@ the median of N runs — plus a tolerance band:
   p99_latency_us:  { median: 41,    tolerance_pct: 20 }
 ```
 
-**Comparison.** A run extracts metrics from loom's JSON report, compares to the
-baseline, and fails outside tolerance:
+**Comparison.** The suite asserts each metric against its baseline ± tolerance
+using DART's native numeric/tolerance assertion
+([bgrewell/dart#41](https://github.com/bgrewell/dart/issues/41)), extracting the
+value from loom's JSON report; an external comparator step is the interim until
+that assertion lands. Either way, a run outside tolerance fails like any other
+assertion:
 
 ```
 FAIL tcp-100g/socket: throughput 8932 Mbps is 28.4% below baseline 12476 (±5%)
