@@ -186,9 +186,9 @@ cluttering the account.
 first; then `gh repo archive` each source repo (read-only, with an EOL notice in
 its README pointing to loom). Delete only local-only scratch with nothing worth
 keeping. Keep active tooling (`dart`, `stencil`, `go-conversions`,
-`claude-skills`). `go-iperf`/`go-libiperf` and the WAN-emulation cluster are
-decided separately. Full process and disposition in
-[docs/eol-plan.md](docs/eol-plan.md).
+`claude-skills`). The iperf wrappers (`go-iperf`/`go-libiperf`) and the
+WAN-emulation cluster are **out of scope and left untouched**. Full process and
+disposition in [docs/eol-plan.md](docs/eol-plan.md).
 **Consequences.** Knowledge is preserved independent of the archived repos;
 harvest-map `file:line` links keep resolving; git history is retained; the
 account gets a clean read-only attic instead of a graveyard.

@@ -1,7 +1,11 @@
 # Old-repo extraction & EOL plan (draft)
 
-How we harvest the useful ideas out of ~30 prior traffic/measurement repos and
+How we harvest the useful ideas out of the prior traffic/measurement repos and
 then retire them — without losing anything worth keeping.
+
+**Scope:** only the traffic-generation / measurement projects identified in the
+audit. The iperf wrappers (`go-iperf`, `go-libiperf`) and the WAN-emulation
+cluster are **out of scope and left untouched** — not harvested, not archived.
 
 ## Principles
 
@@ -71,12 +75,13 @@ sleep-then-spin pacing idea, captured as a snippet note)*.
 `loadly` (unpushed), `sshsim` (no git). Confirm nothing to keep, then remove the
 local directory.
 
-### Decide separately (out of this pass)
-- `go-iperf`, `go-libiperf` — iperf-bound; standalone wrappers, not part of loom's
-  native engine. Keep as standalone or archive — **your call.**
+### Out of scope — left untouched
+Not part of this consolidation; not harvested, not archived, left exactly as-is:
+- `go-iperf`, `go-libiperf` — iperf wrappers; a separate concern from loom's
+  native engine.
 - **WAN-emulation cluster** (`wanem*`, `wemo*`, `smart-wan`, `diversion`,
-  `shaping-controller`, `go-netqospolicy`) — a different category (traffic
-  *impairment*, not generation); its own consolidation later.
+  `shaping-controller`, `go-netqospolicy`) — traffic *impairment*, a different
+  category entirely.
 
 ## Extraction workflow (per repo)
 
