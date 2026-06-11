@@ -1,7 +1,7 @@
 # loom — Design / Architecture RFC
 
 **Status:** Draft for discussion · **Target platform:** Linux only (for now) ·
-**Name:** `loom` *(provisional — see [Open Decisions](#13-open-decisions))*
+**Name:** `loom` *(settled — [ADR-0007](DECISIONS.md#adr-0007--name-loom))*
 
 > This is a living document, not a spec. It's the starting point for a
 > conversation. Disagree in the margins, propose alternatives, rip sections out.
@@ -427,22 +427,20 @@ agent small.
 
 ## 13. Open decisions
 
-These are the forks worth settling before/while we build. **Add your take inline.**
-Tracked as ADRs in [DECISIONS.md](DECISIONS.md).
+Settled — recorded as ADRs in [DECISIONS.md](DECISIONS.md):
 
-1. **Name.** `loom` (provisional) vs **Conflux** (streams converging) /
-   **Sluice** (gated flow) / **Weft** (the woven thread). Repo renames are one
-   command.
-2. **MVP primary datapath.** Start with `socket`; how early do we want `afxdp`
-   given the kernel-bypass emphasis?
-3. **Binary topology.** One `--role` binary vs separate `loom` / `loomd` /
-   `loomctl`.
-4. **One-way delay / HW timestamping** — must-have from day one (changes how
-   central TimeSync + datapath capabilities are), or a later phase?
-5. **License.** (BSD-2? consistent with prior repos.)
-6. **Config surface.** YAML only, or also a Go builder API / HCL?
-7. **Telemetry transport.** Reuse the control-plane gRPC stream, or a separate
-   telemetry channel so it never competes with control RPCs?
+| ADR | Decision | Outcome |
+|---|---|---|
+| 0007 | Name | **loom** (`loom`/`loomd`/`loomctl`) |
+| 0008 | MVP datapath | **socket** first; `afxdp` in phase 3 |
+| 0009 | Binary topology | separate `loom`/`loomd`/`loomctl`, one module |
+| 0010 | OWD / HW timestamping | later phase; TimeSync + capability seams day one |
+| 0012 | Config surface | YAML + Go builder API |
+| 0013 | Telemetry transport | separate channel (never competes with control) |
+| 0017 | CLI framework | **stencil** |
+
+**Still open:** ADR-0011 **License** — TBD before first public release
+(BSD-2 / MIT / Apache-2.0).
 
 ## 14. Phasing / roadmap
 

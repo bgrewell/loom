@@ -1,8 +1,8 @@
 # loom
 
-> **Status: planning / RFC.** No code yet — this repo currently holds a design
-> document we're iterating on. The name `loom` is **provisional** (see
-> [Open Decisions](DESIGN.md#13-open-decisions)).
+> **Status: planning / RFC.** No code yet — this repo currently holds the design
+> docs we're iterating on. Decisions are recorded in
+> [DECISIONS.md](DECISIONS.md); the name is settled as **loom**.
 
 **loom** is a modern, distributed network **traffic generation and measurement**
 system for Linux. It weaves many independent traffic flows — raw protocols and

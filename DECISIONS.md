@@ -75,49 +75,56 @@ boilerplate; worth it.
 
 ---
 
-## Open (Proposed) — need a call
+## Resolved (were open) — and the one still open
 
-## ADR-0007 — Name
+## ADR-0007 — Name: `loom`
+**Status:** Accepted · **Date:** 2026-06-11
+
+`loom` (weaving many traffic threads into one fabric). Binaries: `loom` (CLI),
+`loomd` (agent), `loomctl` (controller); module path `github.com/bgrewell/loom`.
+Alternatives considered: Conflux, Sluice, Weft.
+
+## ADR-0008 — MVP primary datapath: `socket`, `afxdp` in phase 3
+**Status:** Accepted · **Date:** 2026-06-11
+
+The MVP ships the `socket` (kernel net stack) datapath; `afxdp` arrives in phase 3.
+The `memory` test backend exists from day one. The datapath capability model lets
+a scenario opt into a faster backend once available.
+
+## ADR-0009 — Binary topology: separate binaries, one module
+**Status:** Accepted · **Date:** 2026-06-11
+
+Separate `loom` / `loomd` / `loomctl` binaries over one shared core module —
+keeps the agent (`loomd`) small for fleet deployment. A combined dev build is
+optional, not the shipping shape.
+
+## ADR-0010 — One-way delay / HW timestamping: later phase, seams now
+**Status:** Accepted · **Date:** 2026-06-11
+
+OWD + NIC hardware timestamping land in phase 4, but the **TimeSync** service and
+the **datapath capability model** are built from day one so adding OWD is not a
+retrofit. Software RTT/jitter ships earlier.
+
+## ADR-0011 — License (still open)
 **Status:** Proposed · **Date:** 2026-06-10
 
-`loom` (weaving flows into a fabric) is the working name. Alternatives:
-**Conflux** (streams converging), **Sluice** (gated flow), **Weft** (the woven
-thread). Repo rename is one command (`gh repo rename`). **Decision pending.**
+**TBD** — to be decided before the first public code/release. Prior repos lean
+BSD-2; MIT and Apache-2.0 (explicit patent grant) are the other candidates. This
+is the **one remaining open ADR.**
 
-## ADR-0008 — MVP primary datapath
-**Status:** Proposed · **Date:** 2026-06-10
+## ADR-0012 — Config surface: YAML + Go builder API
+**Status:** Accepted · **Date:** 2026-06-11
 
-Start with `socket` (kernel net stack) for the MVP. Open question: how early to
-add `afxdp` given the kernel-bypass emphasis — phase 1 or phase 3? **Pending.**
+YAML scenarios are the primary surface (see
+[scenario schema](docs/scenario-schema.md)); a **Go builder API** is also exposed
+for programmatic scenarios (tests, embedding). HCL is not pursued.
 
-## ADR-0009 — Binary topology
-**Status:** Proposed · **Date:** 2026-06-10
+## ADR-0013 — Telemetry transport: separate channel
+**Status:** Accepted · **Date:** 2026-06-11
 
-One `--role` binary vs separate `loom` / `loomd` / `loomctl`. Trade-off: single
-binary is simpler to ship; separate keeps the agent tiny. **Pending.**
-
-## ADR-0010 — One-way delay / HW timestamping timing
-**Status:** Proposed · **Date:** 2026-06-10
-
-Day-one must-have (makes central TimeSync + datapath capability model load-bearing
-from the start) or a later phase (currently phase 4)? **Pending.**
-
-## ADR-0011 — License
-**Status:** Proposed · **Date:** 2026-06-10
-
-Prior repos lean BSD-2. Confirm license before first real code lands. **Pending.**
-
-## ADR-0012 — Config surface
-**Status:** Proposed · **Date:** 2026-06-10
-
-YAML scenarios are the baseline (see [scenario schema](docs/scenario-schema.md)).
-Open: also expose a Go builder API for programmatic scenarios? HCL? **Pending.**
-
-## ADR-0013 — Telemetry transport
-**Status:** Proposed · **Date:** 2026-06-10
-
-Stream telemetry over the existing control-plane gRPC connection, or a separate
-channel so it never competes with control RPCs? **Pending.**
+Telemetry streams over a **separate channel**, not multiplexed onto the
+control-plane RPCs, so high-rate telemetry can never compete with or stall control
+traffic.
 
 ---
 
@@ -166,14 +173,14 @@ Baselines change only via an explaining PR. See [docs/ci-cd.md](docs/ci-cd.md).
 exact class of regression (12,476 → 8,932 Mbps) that unit/LXD tests can't.
 
 ## ADR-0017 — CLI built on `stencil`
-**Status:** Proposed (recommended) · **Date:** 2026-06-10
+**Status:** Accepted · **Date:** 2026-06-11
 
 **Context.** The CLI adapter needs a command/flag framework.
 `github.com/bgrewell/stencil` is the house framework (used by sshwiz, testbox,
 smart-gateway), has a Claude skill, and provides the build-time version injection
 the release flow (ADR-0016) already assumes.
-**Decision (proposed).** Build the `loom` CLI on `stencil` and use its dev-CLI for
-version/build metadata. Alternative: cobra. **Pending confirmation.**
+**Decision.** Build the `loom` CLI on `stencil` and use its dev-CLI for
+version/build metadata.
 **Consequences.** Ecosystem consistency; one fewer per-repo decision.
 
 ## ADR-0018 — Extract to blueprints, then archive (don't delete) the old repos
