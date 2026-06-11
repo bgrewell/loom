@@ -66,10 +66,11 @@ depends on these; they're infrastructure, not legacy.
 | `conductor-plugin-udpsender` | plugin command-registry pattern (reference, optional) |
 
 ### Archive — nothing to extract (stub / superseded)
-`gperf`, `netben`, `go-iperfmod`, `locast`, `npass`, `ratemon`,
+`gperf`, `netben`, `locast`, `npass`, `ratemon`,
 `NetworkApplicationProfiler`, `NetMeasure`, `NetworkLatencyAnalyzer`,
 `corr-jitter-test`, `ethercomms`, `linkperf`, `goping` *(tiny; only the
-sleep-then-spin pacing idea, captured as a snippet note)*.
+sleep-then-spin pacing idea, already captured in the
+[schedulers blueprint](blueprints/schedulers.md))*.
 
 ### Delete — local-only scratch (no GitHub repo)
 `loadly` (unpushed), `sshsim` (no git). Confirm nothing to keep, then remove the
@@ -77,8 +78,8 @@ local directory.
 
 ### Out of scope — left untouched
 Not part of this consolidation; not harvested, not archived, left exactly as-is:
-- `go-iperf`, `go-libiperf` — iperf wrappers; a separate concern from loom's
-  native engine.
+- `go-iperf`, `go-libiperf`, `go-iperfmod` — iperf wrappers; a separate concern
+  from loom's native engine.
 - **WAN-emulation cluster** (`wanem*`, `wemo*`, `smart-wan`, `diversion`,
   `shaping-controller`, `go-netqospolicy`) — traffic *impairment*, a different
   category entirely.
@@ -125,4 +126,15 @@ Filled in as repos are retired. One row per repo.
 
 | Repo | Was | Extracted to | Disposition | Date |
 |---|---|---|---|---|
-| _…_ | | | | |
+| `gperf` | earliest perf tool (2018) | — | archived | 2026-06-11 |
+| `netben` | network perf benchmark (template stub) | — | archived | 2026-06-11 |
+| `locast` | load creation toolkit (early) | — | archived | 2026-06-11 |
+| `npass` | network perf/stats sniffer (stub) | — | archived | 2026-06-11 |
+| `ratemon` | iptables throughput monitor (stub) | — | archived | 2026-06-11 |
+| `NetworkApplicationProfiler` | app network profiler (empty) | — | archived | 2026-06-11 |
+| `NetMeasure` | measurement stub (C#) | — | archived | 2026-06-11 |
+| `NetworkLatencyAnalyzer` | latency analyzer (Revel scaffold) | — | archived | 2026-06-11 |
+| `corr-jitter-test` | correlated-jitter throwaway (C) | — | archived | 2026-06-11 |
+| `ethercomms` | L2 ethernet comms helper | — (use `mdlayher/raw`) | archived | 2026-06-11 |
+| `linkperf` | link perf (template stub) | — | archived | 2026-06-11 |
+| `goping` | async ICMP pinger | sleep-spin idea → [schedulers](blueprints/schedulers.md) | archived | 2026-06-11 |
