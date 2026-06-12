@@ -22,7 +22,7 @@ func DialUDP(addr string) (*UDPSocket, error) {
 }
 
 // Name implements Datapath.
-func (*UDPSocket) Name() string { return "socket" }
+func (*UDPSocket) Name() string { return "udp" }
 
 // Caps implements Datapath.
 func (*UDPSocket) Caps() Capabilities { return Capabilities{} }
