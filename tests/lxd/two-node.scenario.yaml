@@ -1,0 +1,24 @@
+# Two-node loom scenario for the LXD integration suite: a single rate-limited
+# UDP flow from the client endpoint to the server endpoint. loomctl places a
+# receiver on `server` and a sender on `client`. Endpoints carry no address — the
+# controller falls back to each agent's control host, which the suite fills in at
+# runtime from the containers' (DHCP) addresses (see two-node.yaml).
+scenario: lxd-two-node
+description: one rate-limited UDP flow, client -> server, across two containers
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: blast
+    flow:
+      kind: udp
+      packet_size: 1200
+      rate: 50Mbps
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 3s

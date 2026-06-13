@@ -1,0 +1,100 @@
+suite: loom two-node LXD
+
+# Multi-node correctness on LXD containers (docs/testing.md Tier 4). Two
+# containers each run a loomd agent; loomctl runs on the host and drives a
+# scenario across them — placing a UDP receiver on one and a sender on the other,
+# then aggregating live telemetry. Asserts both flows were placed and the
+# receiver actually accounted for traffic on the wire.
+#
+# Topology: agents get DHCP addresses on the default LXD bridge (lxdbr0); the
+# host reaches their control planes and the sender reaches the receiver over the
+# same bridge. The host's loomd/loomctl binaries are pushed into the containers
+# with `lxc file push`, so the containers need no Go toolchain.
+#
+# Requires an initialised LXD (or Incus) on the runner. Run with: dart -c tests/lxd/two-node.yaml
+
+nodes:
+  - name: local
+    type: local
+    options:
+      shell: /bin/bash
+  - name: server
+    type: lxd
+    options:
+      image: ubuntu:22.04
+  - name: client
+    type: lxd
+    options:
+      image: ubuntu:22.04
+
+setup:
+  - name: build loom binaries (static)
+    node: local
+    step:
+      type: execute
+      options:
+        command: |
+          set -euo pipefail
+          REPO="$(git rev-parse --show-toplevel)"
+          BIN=/tmp/loom-lxd/bin
+          rm -rf /tmp/loom-lxd
+          mkdir -p "$BIN"
+          cd "$REPO"
+          CGO_ENABLED=0 go build -o "$BIN/loomd" ./cmd/loomd
+          CGO_ENABLED=0 go build -o "$BIN/loomctl" ./cmd/loomctl
+          cp tests/lxd/two-node.scenario.yaml "$BIN/scenario.yaml"
+
+  - name: push loomd into the agent containers
+    node: local
+    step:
+      type: execute
+      options:
+        command: |
+          set -euo pipefail
+          for n in server client; do
+            lxc file push /tmp/loom-lxd/bin/loomd "$n/opt/loom/loomd" \
+              --project default --create-dirs --mode 0755
+          done
+
+  - name: start loomd on each agent
+    node: [server, client]
+    step:
+      type: execute
+      options:
+        command: |
+          set -euo pipefail
+          setsid /opt/loom/loomd >/var/log/loomd.log 2>&1 </dev/null &
+          # Give the agent a moment to bind, then confirm it is listening.
+          for i in $(seq 1 20); do
+            grep -q "listening" /var/log/loomd.log && break
+            sleep 0.25
+          done
+          grep -q "listening" /var/log/loomd.log || { echo "loomd failed to start"; cat /var/log/loomd.log; exit 1; }
+
+tests:
+  - name: controller drives a UDP flow across both agents and the receiver sees traffic
+    node: local
+    type: execute
+    options:
+      command: |
+        set -uo pipefail
+        ip() { lxc list "$1" --project default -f csv -c 4 | awk 'NF{print $1; exit}'; }
+        SIP="$(ip server)"; CIP="$(ip client)"
+        echo "server=$SIP client=$CIP"
+        out="$(/tmp/loom-lxd/bin/loomctl run \
+          -f /tmp/loom-lxd/bin/scenario.yaml \
+          -a "client=$CIP:9551,server=$SIP:9551" \
+          --horizon 8s --interval 500ms --output json 2>&1)"
+        echo "$out"
+        echo "$out" | grep -q "placed 2 flows" && echo "PLACED_OK"
+        echo "$out" | grep -oE '"rx_bytes":[0-9]+' | grep -qvE '"rx_bytes":0$' && echo "RX_NONZERO"
+      evaluate:
+        contains: "RX_NONZERO"
+
+teardown:
+  - name: cleanup host build dir
+    node: local
+    step:
+      type: execute
+      options:
+        command: rm -rf /tmp/loom-lxd

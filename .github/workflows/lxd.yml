@@ -1,0 +1,29 @@
+name: lxd-integration
+
+# Heavyweight multi-node tier (docs/testing.md Tier 4): spins real LXD containers
+# and drives a scenario across them. It is kept out of the fast PR gate (ci.yml)
+# because container boot + image pull adds minutes; it runs on every merge to main
+# and on demand instead. Trigger manually from the Actions tab via "Run workflow".
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  integration-lxd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: set up LXD
+        uses: canonical/setup-lxd@v1
+      # Install dart via the Go module proxy, not its install.sh (see ci.yml for
+      # why: the script's GitHub REST call rate-limits on shared runner IPs).
+      - name: install dart
+        run: go install github.com/bgrewell/dart/cmd/dart@latest
+      - name: lxd suite
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          dart -c tests/lxd/two-node.yaml
