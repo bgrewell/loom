@@ -7,6 +7,7 @@ require (
 	github.com/bgrewell/stencil v0.0.0-20260610184505-9b3d050c070e
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
