@@ -13,14 +13,19 @@ import (
 	"google.golang.org/grpc/status"
 
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
+	"github.com/bgrewell/loom/core/datapath"
 	"github.com/bgrewell/loom/core/flow"
 	"github.com/bgrewell/loom/core/units"
 )
 
-// managedFlow is one flow the agent holds across its lifecycle.
+// managedFlow is one flow the agent holds across its lifecycle. run is the
+// sending Flow or receiving Receiver; dp is held for cleanup; port is the bound
+// receiver port (0 for senders).
 type managedFlow struct {
 	id     string
-	flow   *flow.Flow
+	run    flow.Runner
+	dp     datapath.Datapath
+	port   uint32
 	cancel context.CancelFunc
 	done   chan struct{}
 	err    error
@@ -37,12 +42,12 @@ func newFlowManager() *flowManager {
 	return &flowManager{flows: make(map[string]*managedFlow)}
 }
 
-func (m *flowManager) configure(fl *flow.Flow) string {
+func (m *flowManager) configure(run flow.Runner, dp datapath.Datapath, port uint32) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.next++
 	id := fmt.Sprintf("flow-%d", m.next)
-	m.flows[id] = &managedFlow{id: id, flow: fl}
+	m.flows[id] = &managedFlow{id: id, run: run, dp: dp, port: port}
 	return id
 }
 
@@ -65,7 +70,7 @@ func (m *flowManager) start(id string) error {
 	mf.cancel = cancel
 	mf.done = make(chan struct{})
 	go func() {
-		mf.err = mf.flow.Run(ctx)
+		mf.err = mf.run.Run(ctx)
 		close(mf.done)
 	}()
 	return nil
@@ -88,7 +93,7 @@ func (m *flowManager) destroy(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if mf, ok := m.flows[id]; ok {
-		_ = mf.flow.Datapath.Close()
+		_ = mf.dp.Close()
 		delete(m.flows, id)
 	}
 	return nil
@@ -99,7 +104,21 @@ func (m *flowManager) destroy(id string) error {
 // Configure builds and stores a flow, returning its id. Ephemeral data-port
 // assignment is a later step; data_port is 0 for now.
 func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*loomv1.ConfigureResponse, error) {
-	spec, err := toSpec(req.GetFlow())
+	p := req.GetFlow()
+
+	// Receiver: bind an ephemeral UDP port, drain + account inbound traffic.
+	if p.GetListen() {
+		lis, err := datapath.ListenUDP(":0")
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "listen: %v", err)
+		}
+		port := uint32(lis.Port())
+		id := s.mgr.configure(flow.NewReceiver(lis, int(p.GetPacketSize())), lis, port)
+		return &loomv1.ConfigureResponse{FlowId: id, DataPort: port}, nil
+	}
+
+	// Sender.
+	spec, err := toSpec(p)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "flow spec: %v", err)
 	}
@@ -107,7 +126,7 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "build flow: %v", err)
 	}
-	return &loomv1.ConfigureResponse{FlowId: s.mgr.configure(fl)}, nil
+	return &loomv1.ConfigureResponse{FlowId: s.mgr.configure(fl, fl.Datapath, 0)}, nil
 }
 
 // Arm is a no-op for now (receivers/ephemeral ports arrive later).
@@ -147,7 +166,7 @@ func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Con
 	if !ok {
 		return status.Errorf(codes.NotFound, "flow %q", req.GetFlowId())
 	}
-	c := mf.flow.Counters()
+	c := mf.run.Counters()
 	ticker := time.NewTicker(s.telemetryInterval())
 	defer ticker.Stop()
 
