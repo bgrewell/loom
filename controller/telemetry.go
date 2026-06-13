@@ -8,7 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
+	"github.com/bgrewell/loom/control"
 )
 
 // FlowSample is the latest telemetry for one placed flow.
@@ -49,11 +52,20 @@ type placedSource interface{ Placed() []Placed }
 
 // Telemetry subscribes to placed flows' telemetry streams, aggregates them, and
 // pushes snapshots to its observers on an interval — the realtime path.
+//
+// Telemetry dials its own gRPC connections to each agent (keyed by control
+// address), separate from the controller's control-plane connections, so the
+// high-rate telemetry stream never contends with control RPCs (ADR-0013). Call
+// Close to release those connections when collection is done.
 type Telemetry struct {
 	interval  time.Duration
 	mu        sync.Mutex
 	latest    map[string]FlowSample
 	observers []Observer
+
+	connMu sync.Mutex
+	conns  map[string]*grpc.ClientConn
+	dialed map[string]loomv1.ControlClient
 }
 
 // NewTelemetry returns a collector emitting aggregates every interval.
@@ -61,11 +73,45 @@ func NewTelemetry(interval time.Duration) *Telemetry {
 	if interval <= 0 {
 		interval = time.Second
 	}
-	return &Telemetry{interval: interval, latest: make(map[string]FlowSample)}
+	return &Telemetry{
+		interval: interval,
+		latest:   make(map[string]FlowSample),
+		conns:    make(map[string]*grpc.ClientConn),
+		dialed:   make(map[string]loomv1.ControlClient),
+	}
 }
 
 // AddObserver registers o to receive aggregate snapshots. Call before Collect.
 func (t *Telemetry) AddObserver(o Observer) { t.observers = append(t.observers, o) }
+
+// Close releases all telemetry connections. It is safe to call once Collect has
+// returned.
+func (t *Telemetry) Close() {
+	t.connMu.Lock()
+	defer t.connMu.Unlock()
+	for _, conn := range t.conns {
+		_ = conn.Close()
+	}
+	t.conns = make(map[string]*grpc.ClientConn)
+	t.dialed = make(map[string]loomv1.ControlClient)
+}
+
+// clientFor returns a telemetry-dedicated control client for the agent at addr,
+// dialing (and caching) a new connection on first use.
+func (t *Telemetry) clientFor(addr string) (loomv1.ControlClient, error) {
+	t.connMu.Lock()
+	defer t.connMu.Unlock()
+	if cl, ok := t.dialed[addr]; ok {
+		return cl, nil
+	}
+	cl, conn, err := control.Dial(addr)
+	if err != nil {
+		return nil, err
+	}
+	t.conns[addr] = conn
+	t.dialed[addr] = cl
+	return cl, nil
+}
 
 // Collect subscribes to every flow src has placed (including ones placed later)
 // and emits aggregate snapshots until ctx is cancelled.
@@ -91,7 +137,11 @@ func (t *Telemetry) Collect(ctx context.Context, src placedSource) {
 }
 
 func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
-	stream, err := p.Agent.StreamTelemetry(ctx, &loomv1.TelemetryRequest{FlowId: p.FlowID})
+	cl, err := t.clientFor(p.AgentAddr)
+	if err != nil {
+		return
+	}
+	stream, err := cl.StreamTelemetry(ctx, &loomv1.TelemetryRequest{FlowId: p.FlowID})
 	if err != nil {
 		return
 	}

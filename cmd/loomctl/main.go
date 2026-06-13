@@ -79,10 +79,24 @@ func runScenario(ctx *stencil.Context) error {
 	runCtx, cancel := context.WithTimeout(sigCtx, horizon)
 	defer cancel()
 
-	// Optional realtime telemetry: the controller streams per-flow samples from
-	// the agents; observers render them (CLI here, an API/dashboard later).
+	// Time-sync each agent up front so offsets are known before traffic flows
+	// (the seam for one-way-delay measurement, ADR-0010).
+	syncCtx, syncCancel := context.WithTimeout(sigCtx, 5*time.Second)
+	if samples, err := c.SyncAgents(syncCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: time-sync failed: %v\n", err)
+	} else {
+		for endpoint, s := range samples {
+			fmt.Fprintf(os.Stderr, "time-sync %s: offset %v, delay %v\n", endpoint, s.Offset, s.Delay)
+		}
+	}
+	syncCancel()
+
+	// Optional realtime telemetry: the collector streams per-flow samples from
+	// the agents over its own connections (ADR-0013); observers render them (CLI
+	// here, an API/dashboard later).
 	if ctx.Flags.Bool("live") {
 		tel := controller.NewTelemetry(ctx.Flags.Duration("interval"))
+		defer tel.Close()
 		if ctx.Flags.String("output") == "json" {
 			tel.AddObserver(controller.NewJSONObserver(os.Stdout))
 		} else {
