@@ -1,0 +1,111 @@
+// Copyright 2026 Benjamin Grewell
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package loom.v1;
+
+option go_package = "github.com/bgrewell/loom/api/loomv1;loomv1";
+
+// Control is the controller <-> agent control plane (DESIGN.md §8). It carries
+// coordination only; telemetry streams back on StreamTelemetry, and traffic
+// flows over the data plane, never these RPCs.
+service Control {
+  // Health reports liveness and version.
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // Register enrolls an agent with a controller and returns a session id.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Capabilities reports the agent's available datapaths/generators/etc.
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+  // Configure prepares a flow and assigns its ephemeral data port.
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  // Arm readies a configured flow to start (without sending yet).
+  rpc Arm(ArmRequest) returns (ArmResponse);
+  // Start begins a flow.
+  rpc Start(StartRequest) returns (StartResponse);
+  // Stop ends a flow.
+  rpc Stop(StopRequest) returns (StopResponse);
+  // Destroy tears a flow down and releases its resources.
+  rpc Destroy(DestroyRequest) returns (DestroyResponse);
+  // TimeSync performs one four-timestamp clock-sync exchange.
+  rpc TimeSync(TimeSyncRequest) returns (TimeSyncResponse);
+  // StreamTelemetry streams interval samples for a flow (or all flows).
+  rpc StreamTelemetry(TelemetryRequest) returns (stream TelemetrySample);
+}
+
+message HealthRequest {}
+message HealthResponse {
+  string version = 1;
+  bool ready = 2;
+}
+
+message RegisterRequest {
+  string agent_id = 1;
+  string hostname = 2;
+  repeated string tags = 3;
+}
+message RegisterResponse {
+  string session = 1;
+}
+
+message CapabilitiesRequest {}
+message CapabilitiesResponse {
+  repeated string datapaths = 1;
+  repeated string generators = 2;
+  repeated string schedulers = 3;
+  repeated string payloads = 4;
+  bool hardware_timestamps = 5;
+}
+
+// FlowSpec describes one flow to run, mirroring `loom run` flags.
+message FlowSpec {
+  string generator = 1;
+  string payload = 2;
+  string datapath = 3;
+  string target = 4; // host:port for udp/tcp
+  uint32 packet_size = 5;
+  string rate = 6; // e.g. "100Mbps"; empty = unlimited
+  // Stop condition (whichever is reached first; all empty = until-stopped).
+  string duration = 10; // e.g. "10s"
+  uint64 count = 11;    // packets
+  uint64 volume = 12;   // bytes
+}
+
+message ConfigureRequest {
+  FlowSpec flow = 1;
+}
+message ConfigureResponse {
+  string flow_id = 1;
+  uint32 data_port = 2; // ephemeral port the agent will listen/send on
+}
+
+message ArmRequest { string flow_id = 1; }
+message ArmResponse {}
+message StartRequest { string flow_id = 1; }
+message StartResponse {}
+message StopRequest { string flow_id = 1; }
+message StopResponse {}
+message DestroyRequest { string flow_id = 1; }
+message DestroyResponse {}
+
+// TimeSync four-timestamp exchange: client stamps t1, server stamps t2 (recv)
+// and t3 (send), client stamps t4 on receipt.
+message TimeSyncRequest {
+  int64 t1 = 1;
+}
+message TimeSyncResponse {
+  int64 t1 = 1;
+  int64 t2 = 2;
+  int64 t3 = 3;
+}
+
+message TelemetryRequest {
+  string flow_id = 1; // empty = all flows
+}
+message TelemetrySample {
+  string flow_id = 1;
+  int64 nanos = 2;
+  uint64 bytes = 3;
+  uint64 packets = 4;
+  double bits_per_sec = 5;
+}
