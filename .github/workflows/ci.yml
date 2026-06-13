@@ -18,7 +18,21 @@ jobs:
       - name: test
         run: go test -race ./...
 
-# DART integration suites (tests/*.yaml) run on the self-hosted testbed, where
-# the (private) dart binary is preinstalled — not on GitHub-hosted runners, which
-# can't fetch a private repo. Cloud CI above stays code-quality only
-# (gofmt/vet/build/race). See docs/ci-cd.md.
+  integration-dart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # Install dart via the Go module proxy, NOT its install.sh: that script
+      # calls the GitHub REST API (releases/latest), which is rate-limited to
+      # 60/hr per IP and 403s intermittently from shared runner IPs. The proxy
+      # path is unauthenticated-safe; GOTOOLCHAIN=auto handles dart's Go version.
+      - name: install dart
+        run: go install github.com/bgrewell/dart/cmd/dart@latest
+      - name: dart suites
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          dart -c tests/smoke.yaml
+          dart -c tests/single-host.yaml
