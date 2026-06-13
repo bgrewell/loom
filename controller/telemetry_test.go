@@ -40,6 +40,7 @@ func TestTelemetryAggregatesAcrossAgents(t *testing.T) {
 	defer c.Close()
 
 	tel := NewTelemetry(10 * time.Millisecond)
+	defer tel.Close()
 	rxSeen := make(chan struct{}, 1)
 	tel.AddObserver(ObserverFunc(func(a Aggregate) {
 		if a.RxBytes > 0 {
