@@ -25,6 +25,25 @@ web / control-plane adapters around it.
 - **Measurement-first** — streaming and end-of-run reporting of throughput,
   latency, jitter, loss, one-way delay (optional NIC hardware timestamping).
 
+## Try it (phase 1)
+
+A single flow runs today — generated, paced, and measured locally (the `discard`
+datapath generates and accounts without needing a receiver):
+
+```console
+$ go run ./cmd/loom run --rate 50Mbps --duration 5s
+[   1.0s]   49.98 Mbps      4459 pkts     5.95 MB
+...
+--- summary ---
+  duration : 5s
+  sent     : 29.7 MB in 22300 packets
+  avg rate : 49.9 Mbps
+```
+
+Bound by packets (`--count`), volume (`--bytes 100MB`), or time (`--duration`);
+pick a datapath (`--datapath udp --target host:port`), payload, and packet size;
+`--output json` for machine-readable reports.
+
 ## The design
 
 The full architecture is in **[DESIGN.md](DESIGN.md)**. This repo exists to be
