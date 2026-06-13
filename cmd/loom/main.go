@@ -31,5 +31,6 @@ func main() {
 			Branch:     branch,
 		}),
 	)
+	app.Root.Sub = append(app.Root.Sub, runCommand())
 	os.Exit(app.Execute(os.Args[1:]))
 }
