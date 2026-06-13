@@ -32,13 +32,18 @@ const (
 	Receiver
 )
 
-// Placed is one configured flow on an agent.
+// Placed is one configured flow on an agent. FlowIDs are only unique per agent,
+// so AgentAddr+FlowID is the global key.
 type Placed struct {
-	Agent  loomv1.ControlClient
-	FlowID string
-	Role   Role
-	Event  string
+	Agent     loomv1.ControlClient
+	AgentAddr string
+	FlowID    string
+	Role      Role
+	Event     string
 }
+
+// Key uniquely identifies a placed flow across agents.
+func (p Placed) Key() string { return p.AgentAddr + "/" + p.FlowID }
 
 // Controller drives a scenario across agents addressed by endpoint name.
 type Controller struct {
@@ -123,7 +128,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return fmt.Errorf("event %q: no destination endpoint (after excluding %q)", ev.Name, from.Name)
 	}
 
-	fromAgent, _, err := c.agentFor(from.Name)
+	fromAgent, fromAddr, err := c.agentFor(from.Name)
 	if err != nil {
 		return err
 	}
@@ -142,7 +147,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 	if _, err := toAgent.Start(ctx, &loomv1.StartRequest{FlowId: rxCfg.GetFlowId()}); err != nil {
 		return fmt.Errorf("event %q: start receiver: %w", ev.Name, err)
 	}
-	c.track(toAgent, rxCfg.GetFlowId(), Receiver, ev.Name)
+	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name)
 
 	// Sender on the source agent, targeting the receiver's data address.
 	dataHost := to.Address
@@ -158,7 +163,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{FlowId: txCfg.GetFlowId()}); err != nil {
 		return fmt.Errorf("event %q: start sender: %w", ev.Name, err)
 	}
-	c.track(fromAgent, txCfg.GetFlowId(), Sender, ev.Name)
+	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name)
 	return nil
 }
 
@@ -179,10 +184,10 @@ func (c *Controller) agentFor(endpoint string) (loomv1.ControlClient, string, er
 	return cl, addr, nil
 }
 
-func (c *Controller) track(agent loomv1.ControlClient, id string, role Role, event string) {
+func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Role, event string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.placed = append(c.placed, Placed{Agent: agent, FlowID: id, Role: role, Event: event})
+	c.placed = append(c.placed, Placed{Agent: agent, AgentAddr: addr, FlowID: id, Role: role, Event: event})
 }
 
 // senderSpec builds the sender's FlowSpec from an event + the receiver target.

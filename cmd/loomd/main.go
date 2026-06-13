@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/bgrewell/loom/control"
 )
@@ -29,7 +30,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	gs := control.NewGRPCServer(control.NewServer(version))
+	srv := control.NewServer(version)
+	if v := os.Getenv("LOOMD_TELEMETRY"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			srv.SetTelemetryInterval(d)
+		}
+	}
+	gs := control.NewGRPCServer(srv)
 	fmt.Printf("loomd control plane listening on %s\n", lis.Addr())
 
 	go func() {
