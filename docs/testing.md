@@ -63,8 +63,8 @@ tests/
   smoke.yaml          # build + CLI behavior (version, usage, error handling)
   single-host.yaml    # iperf-esque flow over the memory/lo datapath
   lxd/                # multi-node correctness on LXD containers (cloud CI)
-    two-node-tcp.yaml
-    mixed-timeline.yaml
+    two-node.yaml          # suite: agents in containers, loomctl on the host
+    two-node.scenario.yaml # the loom scenario the suite drives
   physical/           # real-NIC suites for the testbed (self-hosted runners)
     tcp-100g.yaml
     udp-loss.yaml
@@ -73,7 +73,11 @@ tests/
 
 - **LXD tier** (cloud CI): spins containers, runs `loomd` on each, drives a
   scenario via the controller, asserts flows ran and reports are sane. Cheap;
-  catches wiring/protocol regressions.
+  catches wiring/protocol regressions. The agents run in the containers while
+  `loomctl` drives them from the host (the realistic controller↔agent split); the
+  host's static binaries are pushed in with `lxc file push`, so the containers
+  need no Go toolchain. It runs via the dedicated `lxd-integration` workflow (on
+  merge to main + on demand), kept out of the fast PR gate.
 - **Physical tier** (testbed): real NICs and rates — correctness *and* the
   performance numbers (Tier 5).
 - DART asserts via `match` / `contains` / `exit_code`; numeric perf thresholds
