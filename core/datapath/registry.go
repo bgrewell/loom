@@ -27,6 +27,9 @@ func init() {
 		}
 		return NewMemory(size), nil
 	})
+	Registry.Register("discard", func(Options) (Datapath, error) {
+		return Discard{}, nil
+	})
 	Registry.Register("udp", func(o Options) (Datapath, error) {
 		s, err := DialUDP(o.Addr)
 		if err != nil {
