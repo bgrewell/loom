@@ -21,14 +21,22 @@ import (
 // managedFlow is one flow the agent holds across its lifecycle. run is the
 // sending Flow or receiving Receiver; dp is held for cleanup; port is the bound
 // receiver port (0 for senders).
+//
+// run, dp, port, and done are set at configure time and never reassigned, so
+// they are read without a lock. mu guards the mutable lifecycle fields
+// (started/cancel/err), which gRPC dispatches concurrently from per-RPC
+// goroutines.
 type managedFlow struct {
-	id     string
-	run    flow.Runner
-	dp     datapath.Datapath
-	port   uint32
-	cancel context.CancelFunc
-	done   chan struct{}
-	err    error
+	id   string
+	run  flow.Runner
+	dp   datapath.Datapath
+	port uint32
+	done chan struct{} // closed when the run goroutine returns
+
+	mu      sync.Mutex
+	started bool
+	cancel  context.CancelFunc
+	err     error
 }
 
 // flowManager tracks configured/running flows on an agent.
@@ -47,7 +55,7 @@ func (m *flowManager) configure(run flow.Runner, dp datapath.Datapath, port uint
 	defer m.mu.Unlock()
 	m.next++
 	id := fmt.Sprintf("flow-%d", m.next)
-	m.flows[id] = &managedFlow{id: id, run: run, dp: dp, port: port}
+	m.flows[id] = &managedFlow{id: id, run: run, dp: dp, port: port, done: make(chan struct{})}
 	return id
 }
 
@@ -60,20 +68,35 @@ func (m *flowManager) get(id string) (*managedFlow, bool) {
 
 func (m *flowManager) start(id string) error {
 	mf, ok := m.get(id)
-	if ok && mf.done != nil {
-		return fmt.Errorf("flow %q already started", id)
-	}
 	if !ok {
 		return fmt.Errorf("flow %q not found", id)
 	}
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
+	if mf.started {
+		return fmt.Errorf("flow %q already started", id)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
+	mf.started = true
 	mf.cancel = cancel
-	mf.done = make(chan struct{})
 	go func() {
-		mf.err = mf.run.Run(ctx)
-		close(mf.done)
+		// Contain a flow panic to this flow: a generator/datapath panic must not
+		// take down the agent and every other flow with it.
+		defer close(mf.done)
+		defer func() {
+			if r := recover(); r != nil {
+				mf.setErr(fmt.Errorf("flow %q panicked: %v", id, r))
+			}
+		}()
+		mf.setErr(mf.run.Run(ctx))
 	}()
 	return nil
+}
+
+func (mf *managedFlow) setErr(err error) {
+	mf.mu.Lock()
+	mf.err = err
+	mf.mu.Unlock()
 }
 
 func (m *flowManager) stop(id string) error {
@@ -81,9 +104,12 @@ func (m *flowManager) stop(id string) error {
 	if !ok {
 		return fmt.Errorf("flow %q not found", id)
 	}
-	if mf.cancel != nil {
-		mf.cancel()
-		<-mf.done
+	mf.mu.Lock()
+	cancel, started := mf.cancel, mf.started
+	mf.mu.Unlock()
+	if started && cancel != nil {
+		cancel()  // idempotent: concurrent Stops cancel once and all observe done
+		<-mf.done // done is closed exactly once by the run goroutine
 	}
 	return nil
 }
@@ -198,13 +224,10 @@ func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Con
 	}
 }
 
-func (mf *managedFlow) doneCh() <-chan struct{} {
-	if mf.done != nil {
-		return mf.done
-	}
-	// Not started yet: never fires.
-	return make(chan struct{})
-}
+// doneCh returns the flow's completion channel, created at configure time. It is
+// closed when the run goroutine returns; for a flow that is configured but never
+// started it simply never fires.
+func (mf *managedFlow) doneCh() <-chan struct{} { return mf.done }
 
 func (s *Server) telemetryInterval() time.Duration {
 	if s.telemetry > 0 {
