@@ -35,6 +35,10 @@ func NewServer(version string) *Server {
 	return &Server{version: version, mgr: newFlowManager()}
 }
 
+// SetTelemetryInterval sets how often StreamTelemetry emits samples. Call before
+// serving. 0 restores the 1s default.
+func (s *Server) SetTelemetryInterval(d time.Duration) { s.telemetry = d }
+
 // NewGRPCServer builds a *grpc.Server with the control service registered.
 func NewGRPCServer(s *Server) *grpc.Server {
 	gs := grpc.NewServer()

@@ -21,7 +21,9 @@ func startAgent(t *testing.T) (addr string, stop func()) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	gs := control.NewGRPCServer(control.NewServer("agent"))
+	srv := control.NewServer("agent")
+	srv.SetTelemetryInterval(10 * time.Millisecond)
+	gs := control.NewGRPCServer(srv)
 	go func() { _ = gs.Serve(lis) }()
 	return lis.Addr().String(), gs.Stop
 }

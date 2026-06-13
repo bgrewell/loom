@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -35,6 +36,9 @@ func runCommand() *stencil.Command {
 	fs.String("scenario", "f", "scenario YAML file", "")
 	fs.StringSlice("agent", "a", "endpoint=host:port pairs, comma-separated", nil)
 	fs.Duration("horizon", "", "timeline horizon", 30*time.Second)
+	fs.Bool("live", "l", "stream live aggregate telemetry", true)
+	fs.Duration("interval", "i", "telemetry interval", time.Second)
+	fs.String("output", "o", "telemetry format: human|json", "human")
 	return &stencil.Command{
 		Name:    "run",
 		Summary: "Run a scenario file across agents",
@@ -71,11 +75,28 @@ func runScenario(ctx *stencil.Context) error {
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	horizon := ctx.Flags.Duration("horizon")
+	runCtx, cancel := context.WithTimeout(sigCtx, horizon)
+	defer cancel()
 
-	fmt.Printf("running scenario %q across %d agents\n", sc.Name, len(addrs))
-	if err := c.Run(sigCtx, ctx.Flags.Duration("horizon")); err != nil {
+	// Optional realtime telemetry: the controller streams per-flow samples from
+	// the agents; observers render them (CLI here, an API/dashboard later).
+	if ctx.Flags.Bool("live") {
+		tel := controller.NewTelemetry(ctx.Flags.Duration("interval"))
+		if ctx.Flags.String("output") == "json" {
+			tel.AddObserver(controller.NewJSONObserver(os.Stdout))
+		} else {
+			tel.AddObserver(controller.NewTextObserver(os.Stdout))
+		}
+		go tel.Collect(runCtx, c)
+	}
+
+	fmt.Fprintf(os.Stderr, "running scenario %q across %d agents\n", sc.Name, len(addrs))
+	if err := c.Run(runCtx, horizon); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
-	fmt.Printf("placed %d flows\n", len(c.Placed()))
+	<-runCtx.Done() // keep streaming until horizon or Ctrl-C
+	c.Teardown(context.Background())
+	fmt.Fprintf(os.Stderr, "done: placed %d flows\n", len(c.Placed()))
 	return nil
 }
