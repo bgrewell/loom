@@ -25,11 +25,15 @@ import (
 // UnimplementedControlServer and return codes.Unimplemented for now.
 type Server struct {
 	loomv1.UnimplementedControlServer
-	version string
+	version   string
+	mgr       *flowManager
+	telemetry time.Duration // telemetry sample interval (0 = 1s)
 }
 
 // NewServer returns a control Server reporting the given version.
-func NewServer(version string) *Server { return &Server{version: version} }
+func NewServer(version string) *Server {
+	return &Server{version: version, mgr: newFlowManager()}
+}
 
 // NewGRPCServer builds a *grpc.Server with the control service registered.
 func NewGRPCServer(s *Server) *grpc.Server {
