@@ -338,9 +338,13 @@ type FlowSpec struct {
 	PacketSize uint32                 `protobuf:"varint,5,opt,name=packet_size,json=packetSize,proto3" json:"packet_size,omitempty"`
 	Rate       string                 `protobuf:"bytes,6,opt,name=rate,proto3" json:"rate,omitempty"` // e.g. "100Mbps"; empty = unlimited
 	// Stop condition (whichever is reached first; all empty = until-stopped).
-	Duration      string `protobuf:"bytes,10,opt,name=duration,proto3" json:"duration,omitempty"` // e.g. "10s"
-	Count         uint64 `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`      // packets
-	Volume        uint64 `protobuf:"varint,12,opt,name=volume,proto3" json:"volume,omitempty"`    // bytes
+	Duration string `protobuf:"bytes,10,opt,name=duration,proto3" json:"duration,omitempty"` // e.g. "10s"
+	Count    uint64 `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`      // packets
+	Volume   uint64 `protobuf:"varint,12,opt,name=volume,proto3" json:"volume,omitempty"`    // bytes
+	// listen makes this a receiver: the agent binds an ephemeral UDP port,
+	// returned as ConfigureResponse.data_port, and drains+accounts inbound packets
+	// instead of generating.
+	Listen        bool `protobuf:"varint,20,opt,name=listen,proto3" json:"listen,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -436,6 +440,13 @@ func (x *FlowSpec) GetVolume() uint64 {
 		return x.Volume
 	}
 	return 0
+}
+
+func (x *FlowSpec) GetListen() bool {
+	if x != nil {
+		return x.Listen
+	}
+	return false
 }
 
 type ConfigureRequest struct {
@@ -1105,7 +1116,7 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"schedulers\x18\x03 \x03(\tR\n" +
 	"schedulers\x12\x1a\n" +
 	"\bpayloads\x18\x04 \x03(\tR\bpayloads\x12/\n" +
-	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\xf5\x01\n" +
+	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\x8d\x02\n" +
 	"\bFlowSpec\x12\x1c\n" +
 	"\tgenerator\x18\x01 \x01(\tR\tgenerator\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\tR\apayload\x12\x1a\n" +
@@ -1117,7 +1128,8 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\bduration\x18\n" +
 	" \x01(\tR\bduration\x12\x14\n" +
 	"\x05count\x18\v \x01(\x04R\x05count\x12\x16\n" +
-	"\x06volume\x18\f \x01(\x04R\x06volume\"9\n" +
+	"\x06volume\x18\f \x01(\x04R\x06volume\x12\x16\n" +
+	"\x06listen\x18\x14 \x01(\bR\x06listen\"9\n" +
 	"\x10ConfigureRequest\x12%\n" +
 	"\x04flow\x18\x01 \x01(\v2\x11.loom.v1.FlowSpecR\x04flow\"I\n" +
 	"\x11ConfigureResponse\x12\x17\n" +

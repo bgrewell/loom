@@ -69,6 +69,11 @@ message FlowSpec {
   string duration = 10; // e.g. "10s"
   uint64 count = 11;    // packets
   uint64 volume = 12;   // bytes
+
+  // listen makes this a receiver: the agent binds an ephemeral UDP port,
+  // returned as ConfigureResponse.data_port, and drains+accounts inbound packets
+  // instead of generating.
+  bool listen = 20;
 }
 
 message ConfigureRequest {
