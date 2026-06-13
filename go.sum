@@ -1,3 +1,5 @@
+github.com/BGrewell/go-conversions v0.0.0-20211209224842-146e47cfb964 h1:oTRrG2R01peLK4R2lA+pMr0hr8sluLNo1S+k2K2JIY0=
+github.com/BGrewell/go-conversions v0.0.0-20211209224842-146e47cfb964/go.mod h1:XtXcz/MP04vhr6c6R/5gZPJZVQpbXlFsKTHr5yy/5sU=
 github.com/bgrewell/stencil v0.0.0-20260610184505-9b3d050c070e h1:SBotc7M53as7540RE7cVNN+en99VcCaCHcu0MK4KzBk=
 github.com/bgrewell/stencil v0.0.0-20260610184505-9b3d050c070e/go.mod h1:sy9xkDRYJwZ8Rm2TxAZ/1cYR5ILFW7RvD5eRwyjMMqI=
 github.com/fatih/color v1.13.0 h1:8LOYc1KYPPmyKMuN8QV2DNRWNbLo6LZ0iLs8+mlH53w=

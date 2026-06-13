@@ -1,0 +1,56 @@
+suite: loom single-host flow
+
+# Builds loom and runs real flows end to end on the local machine (the discard
+# datapath generates + accounts without a receiver). See docs/testing.md (Tier 4).
+
+nodes:
+  - name: local
+    type: local
+    options:
+      shell: /bin/bash
+
+setup:
+  - name: build loom
+    node: local
+    step:
+      type: execute
+      options:
+        command: |
+          set -euo pipefail
+          REPO="$(git rev-parse --show-toplevel)"
+          mkdir -p /tmp/loom-sh
+          cd "$REPO"
+          go build -o /tmp/loom-sh/loom ./cmd/loom
+
+tests:
+  - name: count-bound flow sends exactly N packets (json)
+    node: local
+    type: execute
+    options:
+      command: /tmp/loom-sh/loom run --datapath discard --count 50000 --output json 2>&1 | tail -1
+      evaluate:
+        contains: '"packets":50000'
+
+  - name: rate-limited flow reports throughput
+    node: local
+    type: execute
+    options:
+      command: /tmp/loom-sh/loom run --datapath discard --rate 20Mbps --duration 1s 2>&1 | tail -4
+      evaluate:
+        contains: "Mbps"
+
+  - name: volume-bound flow stops at the byte target
+    node: local
+    type: execute
+    options:
+      command: /tmp/loom-sh/loom run --datapath discard --bytes 10MB --output json 2>&1 | tail -1
+      evaluate:
+        contains: '"type":"summary"'
+
+teardown:
+  - name: cleanup
+    node: local
+    step:
+      type: execute
+      options:
+        command: rm -rf /tmp/loom-sh

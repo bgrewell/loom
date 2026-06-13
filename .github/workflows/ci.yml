@@ -18,14 +18,7 @@ jobs:
       - name: test
         run: go test -race ./...
 
-  integration-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-      - name: install dart
-        run: curl -sSL https://raw.githubusercontent.com/bgrewell/dart/main/install.sh | bash
-      - name: smoke
-        run: dart -c tests/smoke.yaml
+# DART integration suites (tests/*.yaml) run on the self-hosted testbed, where
+# the (private) dart binary is preinstalled — not on GitHub-hosted runners, which
+# can't fetch a private repo. Cloud CI above stays code-quality only
+# (gofmt/vet/build/race). See docs/ci-cd.md.

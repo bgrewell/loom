@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/bgrewell/loom/core/generator"
 	"github.com/bgrewell/loom/core/report"
 	"github.com/bgrewell/loom/core/scheduler"
+	"github.com/bgrewell/loom/core/units"
 	"github.com/bgrewell/stencil"
 )
 
@@ -72,7 +72,7 @@ func runFlow(ctx *stencil.Context) error {
 		Count: uint64(f.Int("count")),
 	}
 	if bs := f.String("bytes"); bs != "" {
-		v, err := parseBytes(bs)
+		v, err := units.ParseSize(bs)
 		if err != nil {
 			return err
 		}
@@ -110,14 +110,14 @@ func schedulerFor(rate string, pkt int) (scheduler.Scheduler, error) {
 	if strings.TrimSpace(rate) == "" {
 		return scheduler.Soak{}, nil
 	}
-	bps, err := parseBitRate(rate)
+	bits, err := units.ParseRate(rate)
 	if err != nil {
 		return nil, err
 	}
 	if pkt < 1 {
 		pkt = 1
 	}
-	pps := bps / float64(pkt*8)
+	pps := float64(bits) / float64(pkt*8)
 	if pps <= 0 {
 		return nil, fmt.Errorf("rate %q too low for packet size %d", rate, pkt)
 	}
@@ -126,49 +126,4 @@ func schedulerFor(rate string, pkt int) (scheduler.Scheduler, error) {
 		gap = 1
 	}
 	return scheduler.Registry.Build("interval", scheduler.Options{Interval: gap})
-}
-
-// parseBitRate parses "100", "100K", "100M", "1Gbps" → bits/sec.
-func parseBitRate(s string) (float64, error) {
-	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, "bps")
-	s = strings.TrimSuffix(s, "b")
-	mult := 1.0
-	if n := len(s); n > 0 {
-		switch s[n-1] {
-		case 'k', 'K':
-			mult, s = 1e3, s[:n-1]
-		case 'm', 'M':
-			mult, s = 1e6, s[:n-1]
-		case 'g', 'G':
-			mult, s = 1e9, s[:n-1]
-		}
-	}
-	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid rate %q", s)
-	}
-	return v * mult, nil
-}
-
-// parseBytes parses "1000", "100K", "100MB", "1GB" → bytes (binary multipliers).
-func parseBytes(s string) (uint64, error) {
-	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, "B")
-	mult := uint64(1)
-	if n := len(s); n > 0 {
-		switch s[n-1] {
-		case 'k', 'K':
-			mult, s = 1024, s[:n-1]
-		case 'm', 'M':
-			mult, s = 1024*1024, s[:n-1]
-		case 'g', 'G':
-			mult, s = 1024*1024*1024, s[:n-1]
-		}
-	}
-	v, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid byte count %q", s)
-	}
-	return v * mult, nil
 }

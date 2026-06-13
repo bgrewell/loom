@@ -81,38 +81,34 @@ func (s *Sampler) Run(ctx context.Context, emit func([]Result)) {
 
 	var seq uint64
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		batch := make([]Result, 0, probes)
 		for i := 0; i < probes; i++ {
 			pctx, cancel := context.WithTimeout(ctx, timeout)
 			rtt, err := s.Pinger.Ping(pctx, seq)
 			cancel()
-
-			r := Result{Time: time.Now(), Seq: seq}
-			switch {
-			case err == nil:
-				r.State, r.RTT = StateOK, rtt
-			case isTimeout(err):
-				r.State, r.Err = StateTimeout, err
-			default:
-				r.State, r.Err = StateError, err
-			}
-			batch = append(batch, r)
+			batch = append(batch, classify(seq, rtt, err))
 			seq++
 
-			if ctx.Err() != nil {
-				emit(batch)
-				return
-			}
-			if s.Spacing > 0 && i < probes-1 {
-				select {
-				case <-ctx.Done():
-					emit(batch)
-					return
-				case <-time.After(s.Spacing):
+			if i < probes-1 {
+				if s.Spacing > 0 {
+					select {
+					case <-ctx.Done():
+					case <-time.After(s.Spacing):
+					}
+				}
+				if ctx.Err() != nil {
+					break
 				}
 			}
 		}
-		emit(batch)
+		// Emit only complete batches; a batch interrupted by cancellation is
+		// dropped so every emitted batch holds exactly `probes` results.
+		if len(batch) == probes {
+			emit(batch)
+		}
 
 		select {
 		case <-ctx.Done():
@@ -120,6 +116,19 @@ func (s *Sampler) Run(ctx context.Context, emit func([]Result)) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func classify(seq uint64, rtt time.Duration, err error) Result {
+	r := Result{Time: time.Now(), Seq: seq}
+	switch {
+	case err == nil:
+		r.State, r.RTT = StateOK, rtt
+	case isTimeout(err):
+		r.State, r.Err = StateTimeout, err
+	default:
+		r.State, r.Err = StateError, err
+	}
+	return r
 }
 
 func isTimeout(err error) bool {
