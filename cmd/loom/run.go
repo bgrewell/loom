@@ -5,17 +5,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"time"
 
-	"github.com/bgrewell/loom/core/datapath"
 	"github.com/bgrewell/loom/core/flow"
-	"github.com/bgrewell/loom/core/generator"
 	"github.com/bgrewell/loom/core/report"
-	"github.com/bgrewell/loom/core/scheduler"
 	"github.com/bgrewell/loom/core/units"
 	"github.com/bgrewell/stencil"
 )
@@ -46,40 +41,31 @@ func runCommand() *stencil.Command {
 
 func runFlow(ctx *stencil.Context) error {
 	f := ctx.Flags
-	pkt := f.Int("packet-size")
 
-	gen, err := generator.Registry.Build(f.String("generator"), generator.Options{
-		Payload:    f.String("payload"),
-		PacketSize: pkt,
-	})
-	if err != nil {
-		return err
-	}
-
-	sched, err := schedulerFor(f.String("rate"), pkt)
-	if err != nil {
-		return err
-	}
-
-	dp, err := datapath.Registry.Build(f.String("datapath"), datapath.Options{Addr: f.String("target")})
-	if err != nil {
-		return err
-	}
-	defer dp.Close()
-
-	stop := flow.Stop{
-		After: f.Duration("duration"),
-		Count: uint64(f.Int("count")),
-	}
+	var volume uint64
 	if bs := f.String("bytes"); bs != "" {
 		v, err := units.ParseSize(bs)
 		if err != nil {
 			return err
 		}
-		stop.Volume = v
+		volume = v
 	}
 
-	fl := &flow.Flow{Generator: gen, Scheduler: sched, Datapath: dp, MTU: pkt, Stop: stop}
+	fl, err := flow.Build(flow.Spec{
+		Generator:  f.String("generator"),
+		Payload:    f.String("payload"),
+		Datapath:   f.String("datapath"),
+		Target:     f.String("target"),
+		PacketSize: f.Int("packet-size"),
+		Rate:       f.String("rate"),
+		Duration:   f.Duration("duration"),
+		Count:      uint64(f.Int("count")),
+		Volume:     volume,
+	})
+	if err != nil {
+		return err
+	}
+	defer fl.Datapath.Close()
 
 	var rep report.Reporter
 	if f.String("output") == "json" {
@@ -101,29 +87,4 @@ func runFlow(ctx *stencil.Context) error {
 	report.Collect(sigCtx, fl.Counters(), f.Duration("interval"), rep, done)
 	<-done // synchronize before reading runErr
 	return runErr
-}
-
-// schedulerFor returns a soak scheduler for an empty rate, or an interval
-// scheduler paced to approximate the given bit rate. (Full rate-grammar parsing
-// arrives with #15 / go-conversions; this is a minimal stand-in.)
-func schedulerFor(rate string, pkt int) (scheduler.Scheduler, error) {
-	if strings.TrimSpace(rate) == "" {
-		return scheduler.Soak{}, nil
-	}
-	bits, err := units.ParseRate(rate)
-	if err != nil {
-		return nil, err
-	}
-	if pkt < 1 {
-		pkt = 1
-	}
-	pps := float64(bits) / float64(pkt*8)
-	if pps <= 0 {
-		return nil, fmt.Errorf("rate %q too low for packet size %d", rate, pkt)
-	}
-	gap := time.Duration(float64(time.Second) / pps)
-	if gap < 1 {
-		gap = 1
-	}
-	return scheduler.Registry.Build("interval", scheduler.Options{Interval: gap})
 }
