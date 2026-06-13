@@ -1,0 +1,73 @@
+// Copyright 2026 Benjamin Grewell
+// SPDX-License-Identifier: Apache-2.0
+
+package units
+
+import (
+	"testing"
+	"time"
+)
+
+func TestParseRate(t *testing.T) {
+	cases := map[string]int64{
+		"1000":    1000,
+		"100K":    100_000,
+		"100Mbps": 100_000_000,
+		"1.5G":    1_500_000_000,
+		"1Gbps":   1_000_000_000,
+	}
+	for in, want := range cases {
+		got, err := ParseRate(in)
+		if err != nil || got != want {
+			t.Errorf("ParseRate(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	if _, err := ParseRate("bogus"); err == nil {
+		t.Error("ParseRate(bogus) should error")
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	cases := map[string]uint64{
+		"1000":  1000,
+		"100K":  102400,
+		"100KB": 102400,
+		"1.5MB": 1572864,
+		"1GB":   1073741824,
+	}
+	for in, want := range cases {
+		got, err := ParseSize(in)
+		if err != nil || got != want {
+			t.Errorf("ParseSize(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	if _, err := ParseSize(""); err == nil {
+		t.Error("ParseSize(empty) should error")
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	d, err := ParseDuration("1m30s")
+	if err != nil || d != 90*time.Second {
+		t.Fatalf("ParseDuration = %v, %v", d, err)
+	}
+}
+
+func TestRanges(t *testing.T) {
+	sr, err := ParseSizeRange("100KB..3MB")
+	if err != nil || sr.Lo != 102400 || sr.Hi != 3*1024*1024 {
+		t.Fatalf("size range = %+v, %v", sr, err)
+	}
+	// scalar → Lo == Hi
+	dr, err := ParseDurationRange("50ms")
+	if err != nil || dr.Lo != dr.Hi || dr.Lo != 50*time.Millisecond {
+		t.Fatalf("duration scalar range = %+v, %v", dr, err)
+	}
+	rr, err := ParseRateRange("10M..100M")
+	if err != nil || rr.Lo != 10_000_000 || rr.Hi != 100_000_000 {
+		t.Fatalf("rate range = %+v, %v", rr, err)
+	}
+	if _, err := ParseSizeRange("3MB..1MB"); err == nil {
+		t.Error("hi < lo should error")
+	}
+}

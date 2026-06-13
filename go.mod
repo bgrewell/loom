@@ -2,7 +2,10 @@ module github.com/bgrewell/loom
 
 go 1.22.4
 
-require github.com/bgrewell/stencil v0.0.0-20260610184505-9b3d050c070e
+require (
+	github.com/BGrewell/go-conversions v0.0.0-20211209224842-146e47cfb964
+	github.com/bgrewell/stencil v0.0.0-20260610184505-9b3d050c070e
+)
 
 require (
 	github.com/fatih/color v1.13.0 // indirect
