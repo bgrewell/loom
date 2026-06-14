@@ -13,6 +13,9 @@ type Options struct {
 	FrameSize int
 	// Addr is the dial target (host:port) for the "udp"/"tcp" datapaths.
 	Addr string
+	// Iface and Queue select the NIC and queue for the "afxdp" datapath.
+	Iface string
+	Queue int
 }
 
 // defaultMemorySize is used when Options.Size is unset for the memory datapath.
