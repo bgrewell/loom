@@ -39,6 +39,11 @@ func NewServer(version string) *Server {
 // serving. 0 restores the 1s default.
 func (s *Server) SetTelemetryInterval(d time.Duration) { s.telemetry = d }
 
+// SetMaxFlows caps the number of concurrently configured flows on this agent;
+// Configure returns ResourceExhausted past the cap. Call before serving. n <= 0
+// removes the limit (not recommended on a reachable agent).
+func (s *Server) SetMaxFlows(n int) { s.mgr.max = n }
+
 // NewGRPCServer builds a *grpc.Server with the control service registered.
 func NewGRPCServer(s *Server) *grpc.Server {
 	gs := grpc.NewServer()
