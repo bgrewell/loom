@@ -12,6 +12,7 @@ package loomv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -23,6 +24,60 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+// FlowRole is what a configured flow does. UNSPECIFIED is treated as SENDER, so
+// an unset role defaults to sending.
+type FlowRole int32
+
+const (
+	FlowRole_FLOW_ROLE_UNSPECIFIED FlowRole = 0
+	FlowRole_FLOW_ROLE_SENDER      FlowRole = 1
+	FlowRole_FLOW_ROLE_RECEIVER    FlowRole = 2 // binds an ephemeral port and drains+accounts inbound
+	FlowRole_FLOW_ROLE_REFLECTOR   FlowRole = 3 // echoes received packets (not yet implemented)
+)
+
+// Enum value maps for FlowRole.
+var (
+	FlowRole_name = map[int32]string{
+		0: "FLOW_ROLE_UNSPECIFIED",
+		1: "FLOW_ROLE_SENDER",
+		2: "FLOW_ROLE_RECEIVER",
+		3: "FLOW_ROLE_REFLECTOR",
+	}
+	FlowRole_value = map[string]int32{
+		"FLOW_ROLE_UNSPECIFIED": 0,
+		"FLOW_ROLE_SENDER":      1,
+		"FLOW_ROLE_RECEIVER":    2,
+		"FLOW_ROLE_REFLECTOR":   3,
+	}
+)
+
+func (x FlowRole) Enum() *FlowRole {
+	p := new(FlowRole)
+	*p = x
+	return p
+}
+
+func (x FlowRole) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FlowRole) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_loom_v1_control_proto_enumTypes[0].Descriptor()
+}
+
+func (FlowRole) Type() protoreflect.EnumType {
+	return &file_proto_loom_v1_control_proto_enumTypes[0]
+}
+
+func (x FlowRole) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FlowRole.Descriptor instead.
+func (FlowRole) EnumDescriptor() ([]byte, []int) {
+	return file_proto_loom_v1_control_proto_rawDescGZIP(), []int{0}
+}
 
 type HealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -62,8 +117,9 @@ func (*HealthRequest) Descriptor() ([]byte, []int) {
 
 type HealthResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"` // human-readable build version
 	Ready         bool                   `protobuf:"varint,2,opt,name=ready,proto3" json:"ready,omitempty"`
+	ApiVersion    uint32                 `protobuf:"varint,3,opt,name=api_version,json=apiVersion,proto3" json:"api_version,omitempty"` // control-plane wire version the agent speaks
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -112,11 +168,19 @@ func (x *HealthResponse) GetReady() bool {
 	return false
 }
 
+func (x *HealthResponse) GetApiVersion() uint32 {
+	if x != nil {
+		return x.ApiVersion
+	}
+	return 0
+}
+
 type RegisterRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	Tags          []string               `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty"`
+	ApiVersion    uint32                 `protobuf:"varint,4,opt,name=api_version,json=apiVersion,proto3" json:"api_version,omitempty"` // wire version the controller speaks
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -170,6 +234,13 @@ func (x *RegisterRequest) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *RegisterRequest) GetApiVersion() uint32 {
+	if x != nil {
+		return x.ApiVersion
+	}
+	return 0
 }
 
 type RegisterResponse struct {
@@ -338,13 +409,13 @@ type FlowSpec struct {
 	PacketSize uint32                 `protobuf:"varint,5,opt,name=packet_size,json=packetSize,proto3" json:"packet_size,omitempty"`
 	Rate       string                 `protobuf:"bytes,6,opt,name=rate,proto3" json:"rate,omitempty"` // e.g. "100Mbps"; empty = unlimited
 	// Stop condition (whichever is reached first; all empty = until-stopped).
-	Duration string `protobuf:"bytes,10,opt,name=duration,proto3" json:"duration,omitempty"` // e.g. "10s"
-	Count    uint64 `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`      // packets
-	Volume   uint64 `protobuf:"varint,12,opt,name=volume,proto3" json:"volume,omitempty"`    // bytes
-	// listen makes this a receiver: the agent binds an ephemeral UDP port,
-	// returned as ConfigureResponse.data_port, and drains+accounts inbound packets
-	// instead of generating.
-	Listen        bool `protobuf:"varint,20,opt,name=listen,proto3" json:"listen,omitempty"`
+	Duration *durationpb.Duration `protobuf:"bytes,10,opt,name=duration,proto3" json:"duration,omitempty"`
+	Count    uint64               `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`   // packets
+	Volume   uint64               `protobuf:"varint,12,opt,name=volume,proto3" json:"volume,omitempty"` // bytes
+	// role selects sender vs receiver (and, later, reflector). A receiver binds an
+	// ephemeral UDP port returned as ConfigureResponse.data_port and
+	// drains+accounts inbound packets instead of generating.
+	Role          FlowRole `protobuf:"varint,21,opt,name=role,proto3,enum=loom.v1.FlowRole" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -421,11 +492,11 @@ func (x *FlowSpec) GetRate() string {
 	return ""
 }
 
-func (x *FlowSpec) GetDuration() string {
+func (x *FlowSpec) GetDuration() *durationpb.Duration {
 	if x != nil {
 		return x.Duration
 	}
-	return ""
+	return nil
 }
 
 func (x *FlowSpec) GetCount() uint64 {
@@ -442,11 +513,11 @@ func (x *FlowSpec) GetVolume() uint64 {
 	return 0
 }
 
-func (x *FlowSpec) GetListen() bool {
+func (x *FlowSpec) GetRole() FlowRole {
 	if x != nil {
-		return x.Listen
+		return x.Role
 	}
-	return false
+	return FlowRole_FLOW_ROLE_UNSPECIFIED
 }
 
 type ConfigureRequest struct {
@@ -1095,15 +1166,19 @@ var File_proto_loom_v1_control_proto protoreflect.FileDescriptor
 
 const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\n" +
-	"\x1bproto/loom/v1/control.proto\x12\aloom.v1\"\x0f\n" +
-	"\rHealthRequest\"@\n" +
+	"\x1bproto/loom/v1/control.proto\x12\aloom.v1\x1a\x1egoogle/protobuf/duration.proto\"\x0f\n" +
+	"\rHealthRequest\"a\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x14\n" +
-	"\x05ready\x18\x02 \x01(\bR\x05ready\"\\\n" +
+	"\x05ready\x18\x02 \x01(\bR\x05ready\x12\x1f\n" +
+	"\vapi_version\x18\x03 \x01(\rR\n" +
+	"apiVersion\"}\n" +
 	"\x0fRegisterRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x12\n" +
-	"\x04tags\x18\x03 \x03(\tR\x04tags\",\n" +
+	"\x04tags\x18\x03 \x03(\tR\x04tags\x12\x1f\n" +
+	"\vapi_version\x18\x04 \x01(\rR\n" +
+	"apiVersion\",\n" +
 	"\x10RegisterResponse\x12\x18\n" +
 	"\asession\x18\x01 \x01(\tR\asession\"\x15\n" +
 	"\x13CapabilitiesRequest\"\xc1\x01\n" +
@@ -1116,7 +1191,7 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"schedulers\x18\x03 \x03(\tR\n" +
 	"schedulers\x12\x1a\n" +
 	"\bpayloads\x18\x04 \x03(\tR\bpayloads\x12/\n" +
-	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\x8d\x02\n" +
+	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\xc5\x02\n" +
 	"\bFlowSpec\x12\x1c\n" +
 	"\tgenerator\x18\x01 \x01(\tR\tgenerator\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\tR\apayload\x12\x1a\n" +
@@ -1124,12 +1199,12 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x06target\x18\x04 \x01(\tR\x06target\x12\x1f\n" +
 	"\vpacket_size\x18\x05 \x01(\rR\n" +
 	"packetSize\x12\x12\n" +
-	"\x04rate\x18\x06 \x01(\tR\x04rate\x12\x1a\n" +
+	"\x04rate\x18\x06 \x01(\tR\x04rate\x125\n" +
 	"\bduration\x18\n" +
-	" \x01(\tR\bduration\x12\x14\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x14\n" +
 	"\x05count\x18\v \x01(\x04R\x05count\x12\x16\n" +
-	"\x06volume\x18\f \x01(\x04R\x06volume\x12\x16\n" +
-	"\x06listen\x18\x14 \x01(\bR\x06listen\"9\n" +
+	"\x06volume\x18\f \x01(\x04R\x06volume\x12%\n" +
+	"\x04role\x18\x15 \x01(\x0e2\x11.loom.v1.FlowRoleR\x04roleJ\x04\b\x14\x10\x15R\x06listen\"9\n" +
 	"\x10ConfigureRequest\x12%\n" +
 	"\x04flow\x18\x01 \x01(\v2\x11.loom.v1.FlowSpecR\x04flow\"I\n" +
 	"\x11ConfigureResponse\x12\x17\n" +
@@ -1162,7 +1237,12 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\x12\x18\n" +
 	"\apackets\x18\x04 \x01(\x04R\apackets\x12 \n" +
 	"\fbits_per_sec\x18\x05 \x01(\x01R\n" +
-	"bitsPerSec2\xfe\x04\n" +
+	"bitsPerSec*l\n" +
+	"\bFlowRole\x12\x19\n" +
+	"\x15FLOW_ROLE_UNSPECIFIED\x10\x00\x12\x14\n" +
+	"\x10FLOW_ROLE_SENDER\x10\x01\x12\x16\n" +
+	"\x12FLOW_ROLE_RECEIVER\x10\x02\x12\x17\n" +
+	"\x13FLOW_ROLE_REFLECTOR\x10\x032\xfe\x04\n" +
 	"\aControl\x129\n" +
 	"\x06Health\x12\x16.loom.v1.HealthRequest\x1a\x17.loom.v1.HealthResponse\x12?\n" +
 	"\bRegister\x12\x18.loom.v1.RegisterRequest\x1a\x19.loom.v1.RegisterResponse\x12K\n" +
@@ -1187,57 +1267,62 @@ func file_proto_loom_v1_control_proto_rawDescGZIP() []byte {
 	return file_proto_loom_v1_control_proto_rawDescData
 }
 
+var file_proto_loom_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_proto_loom_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_proto_loom_v1_control_proto_goTypes = []any{
-	(*HealthRequest)(nil),        // 0: loom.v1.HealthRequest
-	(*HealthResponse)(nil),       // 1: loom.v1.HealthResponse
-	(*RegisterRequest)(nil),      // 2: loom.v1.RegisterRequest
-	(*RegisterResponse)(nil),     // 3: loom.v1.RegisterResponse
-	(*CapabilitiesRequest)(nil),  // 4: loom.v1.CapabilitiesRequest
-	(*CapabilitiesResponse)(nil), // 5: loom.v1.CapabilitiesResponse
-	(*FlowSpec)(nil),             // 6: loom.v1.FlowSpec
-	(*ConfigureRequest)(nil),     // 7: loom.v1.ConfigureRequest
-	(*ConfigureResponse)(nil),    // 8: loom.v1.ConfigureResponse
-	(*ArmRequest)(nil),           // 9: loom.v1.ArmRequest
-	(*ArmResponse)(nil),          // 10: loom.v1.ArmResponse
-	(*StartRequest)(nil),         // 11: loom.v1.StartRequest
-	(*StartResponse)(nil),        // 12: loom.v1.StartResponse
-	(*StopRequest)(nil),          // 13: loom.v1.StopRequest
-	(*StopResponse)(nil),         // 14: loom.v1.StopResponse
-	(*DestroyRequest)(nil),       // 15: loom.v1.DestroyRequest
-	(*DestroyResponse)(nil),      // 16: loom.v1.DestroyResponse
-	(*TimeSyncRequest)(nil),      // 17: loom.v1.TimeSyncRequest
-	(*TimeSyncResponse)(nil),     // 18: loom.v1.TimeSyncResponse
-	(*TelemetryRequest)(nil),     // 19: loom.v1.TelemetryRequest
-	(*TelemetrySample)(nil),      // 20: loom.v1.TelemetrySample
+	(FlowRole)(0),                // 0: loom.v1.FlowRole
+	(*HealthRequest)(nil),        // 1: loom.v1.HealthRequest
+	(*HealthResponse)(nil),       // 2: loom.v1.HealthResponse
+	(*RegisterRequest)(nil),      // 3: loom.v1.RegisterRequest
+	(*RegisterResponse)(nil),     // 4: loom.v1.RegisterResponse
+	(*CapabilitiesRequest)(nil),  // 5: loom.v1.CapabilitiesRequest
+	(*CapabilitiesResponse)(nil), // 6: loom.v1.CapabilitiesResponse
+	(*FlowSpec)(nil),             // 7: loom.v1.FlowSpec
+	(*ConfigureRequest)(nil),     // 8: loom.v1.ConfigureRequest
+	(*ConfigureResponse)(nil),    // 9: loom.v1.ConfigureResponse
+	(*ArmRequest)(nil),           // 10: loom.v1.ArmRequest
+	(*ArmResponse)(nil),          // 11: loom.v1.ArmResponse
+	(*StartRequest)(nil),         // 12: loom.v1.StartRequest
+	(*StartResponse)(nil),        // 13: loom.v1.StartResponse
+	(*StopRequest)(nil),          // 14: loom.v1.StopRequest
+	(*StopResponse)(nil),         // 15: loom.v1.StopResponse
+	(*DestroyRequest)(nil),       // 16: loom.v1.DestroyRequest
+	(*DestroyResponse)(nil),      // 17: loom.v1.DestroyResponse
+	(*TimeSyncRequest)(nil),      // 18: loom.v1.TimeSyncRequest
+	(*TimeSyncResponse)(nil),     // 19: loom.v1.TimeSyncResponse
+	(*TelemetryRequest)(nil),     // 20: loom.v1.TelemetryRequest
+	(*TelemetrySample)(nil),      // 21: loom.v1.TelemetrySample
+	(*durationpb.Duration)(nil),  // 22: google.protobuf.Duration
 }
 var file_proto_loom_v1_control_proto_depIdxs = []int32{
-	6,  // 0: loom.v1.ConfigureRequest.flow:type_name -> loom.v1.FlowSpec
-	0,  // 1: loom.v1.Control.Health:input_type -> loom.v1.HealthRequest
-	2,  // 2: loom.v1.Control.Register:input_type -> loom.v1.RegisterRequest
-	4,  // 3: loom.v1.Control.Capabilities:input_type -> loom.v1.CapabilitiesRequest
-	7,  // 4: loom.v1.Control.Configure:input_type -> loom.v1.ConfigureRequest
-	9,  // 5: loom.v1.Control.Arm:input_type -> loom.v1.ArmRequest
-	11, // 6: loom.v1.Control.Start:input_type -> loom.v1.StartRequest
-	13, // 7: loom.v1.Control.Stop:input_type -> loom.v1.StopRequest
-	15, // 8: loom.v1.Control.Destroy:input_type -> loom.v1.DestroyRequest
-	17, // 9: loom.v1.Control.TimeSync:input_type -> loom.v1.TimeSyncRequest
-	19, // 10: loom.v1.Control.StreamTelemetry:input_type -> loom.v1.TelemetryRequest
-	1,  // 11: loom.v1.Control.Health:output_type -> loom.v1.HealthResponse
-	3,  // 12: loom.v1.Control.Register:output_type -> loom.v1.RegisterResponse
-	5,  // 13: loom.v1.Control.Capabilities:output_type -> loom.v1.CapabilitiesResponse
-	8,  // 14: loom.v1.Control.Configure:output_type -> loom.v1.ConfigureResponse
-	10, // 15: loom.v1.Control.Arm:output_type -> loom.v1.ArmResponse
-	12, // 16: loom.v1.Control.Start:output_type -> loom.v1.StartResponse
-	14, // 17: loom.v1.Control.Stop:output_type -> loom.v1.StopResponse
-	16, // 18: loom.v1.Control.Destroy:output_type -> loom.v1.DestroyResponse
-	18, // 19: loom.v1.Control.TimeSync:output_type -> loom.v1.TimeSyncResponse
-	20, // 20: loom.v1.Control.StreamTelemetry:output_type -> loom.v1.TelemetrySample
-	11, // [11:21] is the sub-list for method output_type
-	1,  // [1:11] is the sub-list for method input_type
-	1,  // [1:1] is the sub-list for extension type_name
-	1,  // [1:1] is the sub-list for extension extendee
-	0,  // [0:1] is the sub-list for field type_name
+	22, // 0: loom.v1.FlowSpec.duration:type_name -> google.protobuf.Duration
+	0,  // 1: loom.v1.FlowSpec.role:type_name -> loom.v1.FlowRole
+	7,  // 2: loom.v1.ConfigureRequest.flow:type_name -> loom.v1.FlowSpec
+	1,  // 3: loom.v1.Control.Health:input_type -> loom.v1.HealthRequest
+	3,  // 4: loom.v1.Control.Register:input_type -> loom.v1.RegisterRequest
+	5,  // 5: loom.v1.Control.Capabilities:input_type -> loom.v1.CapabilitiesRequest
+	8,  // 6: loom.v1.Control.Configure:input_type -> loom.v1.ConfigureRequest
+	10, // 7: loom.v1.Control.Arm:input_type -> loom.v1.ArmRequest
+	12, // 8: loom.v1.Control.Start:input_type -> loom.v1.StartRequest
+	14, // 9: loom.v1.Control.Stop:input_type -> loom.v1.StopRequest
+	16, // 10: loom.v1.Control.Destroy:input_type -> loom.v1.DestroyRequest
+	18, // 11: loom.v1.Control.TimeSync:input_type -> loom.v1.TimeSyncRequest
+	20, // 12: loom.v1.Control.StreamTelemetry:input_type -> loom.v1.TelemetryRequest
+	2,  // 13: loom.v1.Control.Health:output_type -> loom.v1.HealthResponse
+	4,  // 14: loom.v1.Control.Register:output_type -> loom.v1.RegisterResponse
+	6,  // 15: loom.v1.Control.Capabilities:output_type -> loom.v1.CapabilitiesResponse
+	9,  // 16: loom.v1.Control.Configure:output_type -> loom.v1.ConfigureResponse
+	11, // 17: loom.v1.Control.Arm:output_type -> loom.v1.ArmResponse
+	13, // 18: loom.v1.Control.Start:output_type -> loom.v1.StartResponse
+	15, // 19: loom.v1.Control.Stop:output_type -> loom.v1.StopResponse
+	17, // 20: loom.v1.Control.Destroy:output_type -> loom.v1.DestroyResponse
+	19, // 21: loom.v1.Control.TimeSync:output_type -> loom.v1.TimeSyncResponse
+	21, // 22: loom.v1.Control.StreamTelemetry:output_type -> loom.v1.TelemetrySample
+	13, // [13:23] is the sub-list for method output_type
+	3,  // [3:13] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_loom_v1_control_proto_init() }
@@ -1250,13 +1335,14 @@ func file_proto_loom_v1_control_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_loom_v1_control_proto_rawDesc), len(file_proto_loom_v1_control_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_proto_loom_v1_control_proto_goTypes,
 		DependencyIndexes: file_proto_loom_v1_control_proto_depIdxs,
+		EnumInfos:         file_proto_loom_v1_control_proto_enumTypes,
 		MessageInfos:      file_proto_loom_v1_control_proto_msgTypes,
 	}.Build()
 	File_proto_loom_v1_control_proto = out.File

@@ -53,7 +53,7 @@ func TestTwoAgentFlow(t *testing.T) {
 
 	// Receiver binds an ephemeral port.
 	rxCfg, err := rx.client.Configure(ctx, &loomv1.ConfigureRequest{Flow: &loomv1.FlowSpec{
-		Listen: true, Datapath: "udp", PacketSize: 1500,
+		Role: loomv1.FlowRole_FLOW_ROLE_RECEIVER, Datapath: "udp", PacketSize: 1500,
 	}})
 	if err != nil || rxCfg.GetDataPort() == 0 {
 		t.Fatalf("receiver Configure = %+v, %v", rxCfg, err)

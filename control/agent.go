@@ -16,7 +16,6 @@ import (
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
 	"github.com/bgrewell/loom/core/datapath"
 	"github.com/bgrewell/loom/core/flow"
-	"github.com/bgrewell/loom/core/units"
 )
 
 // managedFlow is one flow the agent holds across its lifecycle. run is the
@@ -140,8 +139,12 @@ func (m *flowManager) destroy(id string) error {
 func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*loomv1.ConfigureResponse, error) {
 	p := req.GetFlow()
 
+	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_REFLECTOR {
+		return nil, status.Error(codes.Unimplemented, "reflector role not yet supported")
+	}
+
 	// Receiver: bind an ephemeral UDP port, drain + account inbound traffic.
-	if p.GetListen() {
+	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_RECEIVER {
 		if err := validatePacketSize(p.GetPacketSize()); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
@@ -267,12 +270,8 @@ func toSpec(p *loomv1.FlowSpec) (flow.Spec, error) {
 		return flow.Spec{}, err
 	}
 	var dur time.Duration
-	if p.GetDuration() != "" {
-		d, err := units.ParseDuration(p.GetDuration())
-		if err != nil {
-			return flow.Spec{}, err
-		}
-		dur = d
+	if d := p.GetDuration(); d != nil {
+		dur = d.AsDuration()
 	}
 	return flow.Spec{
 		Generator:  p.GetGenerator(),

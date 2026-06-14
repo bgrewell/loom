@@ -70,8 +70,8 @@ available; a web dashboard shows live flow state.
 - [ ] **AF_PACKET datapath**
 - [ ] **AF_XDP datapath** + capability model — blueprint: datapath-backends
 - [ ] **Reporter sinks** — file/json, prometheus, socket
-- [ ] **Wire/proto discipline** — reserved ranges, FlowRole enum, version + auth
-      fields, protobuf.Duration ([ADR-0021](../DECISIONS.md#adr-0021--wireproto-evolution-discipline)) — before any external wire consumer
+- [x] **Wire/proto discipline** — reserved ranges, FlowRole enum, api_version
+      handshake, protobuf.Duration ([ADR-0021](../DECISIONS.md#adr-0021--wireproto-evolution-discipline)); auth rides call metadata (ADR-0014)
 - [ ] **Component DI + functional-option constructors** ([ADR-0022](../DECISIONS.md#adr-0022--inject-component-registries-functional-options-on-constructors))
 - [ ] **Web dashboard** + REST/gRPC-gateway API
 - [x] **Optional security** — shared auth token (ADR-0014): `LOOMD_TOKEN` on the

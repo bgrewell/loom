@@ -69,9 +69,13 @@ func NewGRPCServer(s *Server) *grpc.Server {
 	return gs
 }
 
-// Health reports liveness and version.
+// APIVersion is the control-plane wire version this build speaks (ADR-0021). Bump
+// it on a breaking proto change so peers can detect a mismatch.
+const APIVersion = 1
+
+// Health reports liveness, build version, and the wire API version.
 func (s *Server) Health(context.Context, *loomv1.HealthRequest) (*loomv1.HealthResponse, error) {
-	return &loomv1.HealthResponse{Version: s.version, Ready: true}, nil
+	return &loomv1.HealthResponse{Version: s.version, Ready: true, ApiVersion: APIVersion}, nil
 }
 
 // Register enrolls an agent. Minimal for now: the agent id is echoed as the
