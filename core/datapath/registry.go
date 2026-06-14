@@ -7,8 +7,10 @@ import "github.com/bgrewell/loom/core/registry"
 
 // Options configures a datapath built through the registry.
 type Options struct {
-	// Size is the buffer depth for the "memory" datapath.
+	// Size is the frame-buffer depth for the "memory" datapath.
 	Size int
+	// FrameSize is the per-frame byte capacity (the flow's packet size).
+	FrameSize int
 	// Addr is the dial target (host:port) for the "udp"/"tcp" datapaths.
 	Addr string
 }
@@ -16,32 +18,26 @@ type Options struct {
 // defaultMemorySize is used when Options.Size is unset for the memory datapath.
 const defaultMemorySize = 1024
 
-// Registry holds the available datapath factories by name.
-var Registry = registry.New[Datapath, Options]()
+// Registry holds the available transmit-datapath factories by name. Receive-side
+// datapaths (e.g. the UDP listener) are constructed directly, not via the
+// registry.
+var Registry = registry.New[TxDatapath, Options]()
 
 func init() {
-	Registry.Register("memory", func(o Options) (Datapath, error) {
+	Registry.Register("memory", func(o Options) (TxDatapath, error) {
 		size := o.Size
 		if size <= 0 {
 			size = defaultMemorySize
 		}
-		return NewMemory(size), nil
+		return NewMemory(size, o.FrameSize), nil
 	})
-	Registry.Register("discard", func(Options) (Datapath, error) {
-		return Discard{}, nil
+	Registry.Register("discard", func(o Options) (TxDatapath, error) {
+		return NewDiscard(o.FrameSize), nil
 	})
-	Registry.Register("udp", func(o Options) (Datapath, error) {
-		s, err := DialUDP(o.Addr)
-		if err != nil {
-			return nil, err
-		}
-		return s, nil
+	Registry.Register("udp", func(o Options) (TxDatapath, error) {
+		return DialUDP(o.Addr, o.FrameSize)
 	})
-	Registry.Register("tcp", func(o Options) (Datapath, error) {
-		s, err := DialTCP(o.Addr)
-		if err != nil {
-			return nil, err
-		}
-		return s, nil
+	Registry.Register("tcp", func(o Options) (TxDatapath, error) {
+		return DialTCP(o.Addr, o.FrameSize)
 	})
 }

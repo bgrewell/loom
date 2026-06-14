@@ -3,52 +3,36 @@
 
 package datapath
 
-// Memory is an in-process loopback datapath: Send enqueues a packet that a
-// subsequent Recv returns. It needs no kernel, NIC, or privileges, which makes
-// the full flow path unit-testable and deterministic.
-type Memory struct {
-	ch chan []byte
+// Memory is an in-process loopback datapath for tests and the registry's
+// "memory" backend: committed frames are received from the same backing slab, so
+// the full flow path is exercised without a kernel, NIC, or privileges. It is the
+// zero-copy arena under a stable name; like the hot path it is
+// single-producer/single-consumer.
+type Memory struct{ ring *Arena }
+
+// NewMemory returns a Memory loopback buffering up to frames packets of
+// frameSize bytes each.
+func NewMemory(frames, frameSize int) *Memory {
+	return &Memory{ring: NewArena(frames, frameSize)}
 }
 
-// NewMemory returns a Memory datapath buffering up to size packets (clamped to
-// at least 1).
-func NewMemory(size int) *Memory {
-	if size < 1 {
-		size = 1
-	}
-	return &Memory{ch: make(chan []byte, size)}
-}
-
-// Name implements Datapath.
+// Name implements the datapath interfaces.
 func (*Memory) Name() string { return "memory" }
 
-// Caps implements Datapath.
-func (*Memory) Caps() Capabilities { return Capabilities{} }
+// Caps implements the datapath interfaces.
+func (m *Memory) Caps() Capabilities { return m.ring.Caps() }
 
-// Send copies p into the queue, returning ErrFull if it is full.
-func (m *Memory) Send(p []byte) (int, error) {
-	b := make([]byte, len(p))
-	copy(b, p)
-	select {
-	case m.ch <- b:
-		return len(p), nil
-	default:
-		return 0, ErrFull
-	}
-}
+// TxReserve implements TxDatapath.
+func (m *Memory) TxReserve(n int) []Frame { return m.ring.TxReserve(n) }
 
-// Recv returns the next queued packet, or ErrEmpty if none is available.
-func (m *Memory) Recv(p []byte) (int, error) {
-	select {
-	case b := <-m.ch:
-		return copy(p, b), nil
-	default:
-		return 0, ErrEmpty
-	}
-}
+// TxCommit implements TxDatapath.
+func (m *Memory) TxCommit(frames []Frame) (int, error) { return m.ring.TxCommit(frames) }
 
-// Close releases the queue. It does not close the channel: a buffered channel is
-// reclaimed by the GC once unreferenced, and closing it would panic any producer
-// still in Send (close-then-send race). It is therefore safe to call Close
-// concurrently with, or before joining, an in-flight Send.
-func (m *Memory) Close() error { return nil }
+// RxPoll implements RxDatapath.
+func (m *Memory) RxPoll(max int) ([]Frame, error) { return m.ring.RxPoll(max) }
+
+// RxRelease implements RxDatapath.
+func (m *Memory) RxRelease(frames []Frame) { m.ring.RxRelease(frames) }
+
+// Close implements the datapath interfaces.
+func (m *Memory) Close() error { return m.ring.Close() }

@@ -54,7 +54,7 @@ func Build(spec Spec) (*Flow, error) {
 	if dname == "" {
 		dname = "discard"
 	}
-	dp, err := datapath.Registry.Build(dname, datapath.Options{Addr: spec.Target})
+	dp, err := datapath.Registry.Build(dname, datapath.Options{Addr: spec.Target, FrameSize: spec.PacketSize})
 	if err != nil {
 		return nil, err
 	}

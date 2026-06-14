@@ -36,23 +36,47 @@ func Scheduler(t testing.TB, s scheduler.Scheduler) {
 	}
 }
 
-// Datapath asserts a datapath honors the Datapath contract. The datapath must be
-// usable without external setup (e.g. memory/discard).
-func Datapath(t testing.TB, d datapath.Datapath) {
+// TxDatapath asserts a transmit datapath honors the contract. The datapath must
+// be usable without external setup (e.g. memory/discard).
+func TxDatapath(t testing.TB, d datapath.TxDatapath) {
 	t.Helper()
 	if d.Name() == "" {
-		t.Errorf("Datapath.Name() is empty")
+		t.Errorf("TxDatapath.Name() is empty")
 	}
 	d.Caps() // must not panic
+	frames := d.TxReserve(1)
+	if len(frames) == 0 {
+		t.Fatalf("%s: TxReserve(1) returned no frames", d.Name())
+	}
 	msg := []byte("contract")
-	n, err := d.Send(msg)
+	if cap(frames[0].Data) < len(msg) {
+		t.Fatalf("%s: reserved frame too small (%d)", d.Name(), cap(frames[0].Data))
+	}
+	n := copy(frames[0].Data, msg)
+	frames[0].Len = n
+	sent, err := d.TxCommit(frames[:1])
 	if err != nil {
-		t.Errorf("%s: Send error: %v", d.Name(), err)
+		t.Errorf("%s: TxCommit error: %v", d.Name(), err)
 	}
-	if n != len(msg) {
-		t.Errorf("%s: Send wrote %d, want %d", d.Name(), n, len(msg))
+	if sent != 1 {
+		t.Errorf("%s: TxCommit sent %d, want 1", d.Name(), sent)
 	}
-	_, _ = d.Recv(make([]byte, 32)) // must not panic
+	if err := d.Close(); err != nil {
+		t.Errorf("%s: Close error: %v", d.Name(), err)
+	}
+}
+
+// RxDatapath asserts a receive datapath honors the contract: polling and
+// releasing must not panic, and an empty poll must not block indefinitely (the
+// backend bounds it with a deadline).
+func RxDatapath(t testing.TB, d datapath.RxDatapath) {
+	t.Helper()
+	if d.Name() == "" {
+		t.Errorf("RxDatapath.Name() is empty")
+	}
+	d.Caps() // must not panic
+	frames, _ := d.RxPoll(4)
+	d.RxRelease(frames)
 	if err := d.Close(); err != nil {
 		t.Errorf("%s: Close error: %v", d.Name(), err)
 	}

@@ -203,7 +203,7 @@ harvest-map `file:line` links keep resolving; git history is retained; the
 account gets a clean read-only attic instead of a graveyard.
 
 ## ADR-0019 — Batch-first datapath interface
-**Status:** Proposed · **Date:** 2026-06-13
+**Status:** Accepted · **Date:** 2026-06-13 · **Resolved:** 2026-06-14
 
 **Context.** [DESIGN.md §5.1](DESIGN.md#51-datapath--the-packet-io-backend-driverfirmware-layer)
 specifies a batch datapath (`TxBatch(pkts [][]byte)` / `RxBatch(into [][]byte)`),
@@ -226,11 +226,17 @@ and zero-copy needs an explicit fill/flush/return-to-pool model. The pump and
 backend benefits).
 **Consequences.** One deliberate interface change now instead of a forced one
 later; the hot path can be made genuinely alloc/lock/log-free per ADR-0005. Costs
-a small amount of adapter boilerplate for the trivial backends. Open sub-question
-for review: which ownership model — settle it here before implementing.
+a small amount of adapter boilerplate for the trivial backends.
+**Resolution (Model B, datapath-owned).** Ownership is the **datapath's**:
+`TxReserve(n)`/`TxCommit` and `RxPoll(max)`/`RxRelease` hand out `Frame`s whose
+`Data` aliases backend memory, valid only until the matching commit/release (the
+borrow contract). Kernel-socket backends use a shared `framePool`; the in-process
+`arena` is a zero-copy loopback that proves a received packet is read from the
+exact memory it was sent from. Interfaces split into `TxDatapath`/`RxDatapath`.
+Delivered across two PRs (interface + adapters, then native backends).
 
 ## ADR-0020 — Per-packet RX metadata carrier
-**Status:** Proposed · **Date:** 2026-06-13
+**Status:** Accepted · **Date:** 2026-06-13 · **Resolved:** 2026-06-14
 
 **Context.** ADR-0010 keeps one-way-delay / hardware-timestamping for a later
 phase but commits to having the *seams* in place now so adding OWD isn't a
@@ -246,8 +252,11 @@ composing with ADR-0019). Populate only `Nanos` (software timestamp) initially;
 hardware timestamps fill the same field later with no signature change. This is
 the data-carrying counterpart to the capability flag.
 **Consequences.** OWD, jitter, and loss/reorder become additive features on a
-stable interface. Slightly larger RX value type. Decide alongside ADR-0019 since
-they share the batch signature.
+stable interface. Slightly larger RX value type.
+**Resolution.** Implemented as `datapath.Frame.Meta` (`Meta{Nanos, Src}`), carried
+on every `RxPoll` frame. The UDP listener stamps `Nanos` from the software clock
+and fills `Src` from the datagram; NIC hardware timestamps will populate the same
+field later with no signature change.
 
 ## ADR-0021 — Wire/proto evolution discipline
 **Status:** Proposed · **Date:** 2026-06-13

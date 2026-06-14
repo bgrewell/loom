@@ -10,40 +10,38 @@ import (
 )
 
 func TestMemoryRoundTrip(t *testing.T) {
-	m := NewMemory(4)
+	m := NewMemory(4, 64)
 	if m.Name() != "memory" {
 		t.Fatalf("name = %q", m.Name())
 	}
-	want := []byte("hello")
-	if n, err := m.Send(want); err != nil || n != len(want) {
-		t.Fatalf("Send = %d, %v", n, err)
+	tx := m.TxReserve(1)
+	if len(tx) != 1 {
+		t.Fatalf("TxReserve returned %d frames", len(tx))
 	}
-	// Mutating the caller's buffer must not affect the queued copy.
-	want[0] = 'H'
-
-	buf := make([]byte, 16)
-	n, err := m.Recv(buf)
-	if err != nil {
-		t.Fatalf("Recv error: %v", err)
+	n := copy(tx[0].Data, []byte("hello"))
+	tx[0].Len = n
+	if sent, err := m.TxCommit(tx[:1]); err != nil || sent != 1 {
+		t.Fatalf("TxCommit = %d, %v", sent, err)
 	}
-	if got := string(buf[:n]); got != "hello" {
-		t.Fatalf("Recv = %q, want hello", got)
+	rx, err := m.RxPoll(1)
+	if err != nil || len(rx) != 1 {
+		t.Fatalf("RxPoll = %d, %v", len(rx), err)
 	}
+	if got := string(rx[0].Data[:rx[0].Len]); got != "hello" {
+		t.Fatalf("RxPoll = %q, want hello", got)
+	}
+	m.RxRelease(rx)
 }
 
-func TestMemoryFullAndEmpty(t *testing.T) {
-	m := NewMemory(1)
-	if _, err := m.Send([]byte("a")); err != nil {
-		t.Fatalf("first send: %v", err)
+func TestMemoryFullReservesFewer(t *testing.T) {
+	m := NewMemory(1, 64) // a single frame
+	tx := m.TxReserve(1)
+	if len(tx) != 1 {
+		t.Fatalf("first TxReserve = %d, want 1", len(tx))
 	}
-	if _, err := m.Send([]byte("b")); err != ErrFull {
-		t.Fatalf("second send err = %v, want ErrFull", err)
-	}
-	if _, err := m.Recv(make([]byte, 4)); err != nil {
-		t.Fatalf("recv: %v", err)
-	}
-	if _, err := m.Recv(make([]byte, 4)); err != ErrEmpty {
-		t.Fatalf("empty recv err = %v, want ErrEmpty", err)
+	// With the only frame reserved (not yet committed), a second reserve gets none.
+	if more := m.TxReserve(1); len(more) != 0 {
+		t.Fatalf("second TxReserve = %d, want 0 (exhausted)", len(more))
 	}
 }
 
@@ -54,23 +52,58 @@ func TestUDPSocketLoopback(t *testing.T) {
 	}
 	defer pc.Close()
 
-	s, err := DialUDP(pc.LocalAddr().String())
+	s, err := DialUDP(pc.LocalAddr().String(), 1500)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer s.Close()
 
-	if _, err := s.Send([]byte("ping")); err != nil {
-		t.Fatalf("send: %v", err)
+	tx := s.TxReserve(1)
+	n := copy(tx[0].Data, []byte("ping"))
+	tx[0].Len = n
+	if _, err := s.TxCommit(tx[:1]); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 
 	buf := make([]byte, 16)
 	_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
-	n, _, err := pc.ReadFrom(buf)
+	got, _, err := pc.ReadFrom(buf)
 	if err != nil {
 		t.Fatalf("readfrom: %v", err)
 	}
-	if got := string(buf[:n]); got != "ping" {
-		t.Fatalf("received %q, want ping", got)
+	if g := string(buf[:got]); g != "ping" {
+		t.Fatalf("received %q, want ping", g)
 	}
+}
+
+func TestUDPListenerReceives(t *testing.T) {
+	l, err := ListenUDP("127.0.0.1:0", 1500)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer l.Close()
+
+	sender, err := net.Dial("udp", l.conn.LocalAddr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer sender.Close()
+	if _, err := sender.Write([]byte("data")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	frames, err := l.RxPoll(8)
+	if err != nil {
+		t.Fatalf("RxPoll: %v", err)
+	}
+	if len(frames) != 1 || string(frames[0].Data[:frames[0].Len]) != "data" {
+		t.Fatalf("RxPoll returned %d frames: %q", len(frames), frames)
+	}
+	if frames[0].Meta.Nanos == 0 {
+		t.Error("frame missing receive timestamp")
+	}
+	if !frames[0].Meta.Src.IsValid() {
+		t.Error("frame missing source address")
+	}
+	l.RxRelease(frames)
 }

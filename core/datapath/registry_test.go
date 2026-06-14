@@ -6,12 +6,17 @@ package datapath
 import "testing"
 
 func TestRegistryMemory(t *testing.T) {
-	d, err := Registry.Build("memory", Options{Size: 4})
+	d, err := Registry.Build("memory", Options{Size: 4, FrameSize: 64})
 	if err != nil || d.Name() != "memory" {
 		t.Fatalf("build memory = %v, %v", d, err)
 	}
-	if _, err := d.Send([]byte("hi")); err != nil {
-		t.Fatalf("send: %v", err)
+	tx := d.TxReserve(1)
+	if len(tx) != 1 {
+		t.Fatalf("TxReserve = %d frames", len(tx))
+	}
+	tx[0].Len = copy(tx[0].Data, []byte("hi"))
+	if sent, err := d.TxCommit(tx[:1]); err != nil || sent != 1 {
+		t.Fatalf("commit = %d, %v", sent, err)
 	}
 	if _, err := Registry.Build("nope", Options{}); err == nil {
 		t.Fatal("unknown datapath should error")

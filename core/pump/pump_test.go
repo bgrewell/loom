@@ -29,7 +29,7 @@ func (g *nGen) Next(buf []byte) (int, bool) {
 
 func TestPumpRunsAndAccounts(t *testing.T) {
 	var acct accounting.Counters
-	p := New(&nGen{left: 5}, scheduler.Soak{}, datapath.SinglePacketTx(datapath.Discard{}, 1500), &acct)
+	p := New(&nGen{left: 5}, scheduler.Soak{}, datapath.NewDiscard(1500), &acct)
 	if err := p.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestPumpStopsOnContext(t *testing.T) {
 	var acct accounting.Counters
 	// Soak generator that never finishes on its own.
 	gen := generator.NewStream(payload.NewRandom(1500, 1), 1400)
-	p := New(gen, scheduler.Soak{}, datapath.SinglePacketTx(datapath.Discard{}, 1500), &acct)
+	p := New(gen, scheduler.Soak{}, datapath.NewDiscard(1500), &acct)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := p.Run(ctx); err != nil {
