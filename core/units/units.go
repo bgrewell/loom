@@ -9,6 +9,7 @@ package units
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -17,11 +18,16 @@ import (
 )
 
 // ParseRate parses a bit-rate (e.g. "100Mbps", "1.5G", "1000") to bits/sec using
-// decimal multipliers (K=1e3, M=1e6, G=1e9).
+// decimal multipliers (K=1e3, M=1e6, G=1e9). A value that overflows int64 wraps
+// negative in the underlying parser, so a negative result is rejected as
+// out-of-range rather than returned as a poisoned (negative) rate.
 func ParseRate(s string) (int64, error) {
 	v, err := conv.StringBitRateToInt(strings.TrimSpace(s))
 	if err != nil {
 		return 0, fmt.Errorf("invalid rate %q", s)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("rate out of range %q", s)
 	}
 	return v, nil
 }
@@ -49,7 +55,13 @@ func ParseSize(s string) (uint64, error) {
 	if err != nil || f < 0 {
 		return 0, fmt.Errorf("invalid size %q", s)
 	}
-	return uint64(f * mult), nil
+	// Guard the float->uint64 conversion: out-of-range floats convert to
+	// implementation-defined garbage, silently corrupting the byte count.
+	prod := f * mult
+	if math.IsNaN(prod) || math.IsInf(prod, 0) || prod < 0 || prod >= math.MaxUint64 {
+		return 0, fmt.Errorf("size out of range %q", s)
+	}
+	return uint64(prod), nil
 }
 
 // ParseDuration parses a Go duration string (e.g. "100ms", "1m30s").

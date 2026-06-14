@@ -44,19 +44,26 @@ type flowManager struct {
 	mu    sync.Mutex
 	flows map[string]*managedFlow
 	next  uint64
+	max   int // cap on concurrently configured flows (0 = unlimited)
 }
 
 func newFlowManager() *flowManager {
-	return &flowManager{flows: make(map[string]*managedFlow)}
+	return &flowManager{flows: make(map[string]*managedFlow), max: defaultMaxFlows}
 }
 
-func (m *flowManager) configure(run flow.Runner, dp datapath.Datapath, port uint32) string {
+// configure registers a flow and returns its id, or an error if the agent's
+// flow limit is reached (so an unbounded Configure loop cannot exhaust memory
+// and ports). On error the caller must release run/dp.
+func (m *flowManager) configure(run flow.Runner, dp datapath.Datapath, port uint32) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.max > 0 && len(m.flows) >= m.max {
+		return "", fmt.Errorf("flow limit reached (%d)", m.max)
+	}
 	m.next++
 	id := fmt.Sprintf("flow-%d", m.next)
 	m.flows[id] = &managedFlow{id: id, run: run, dp: dp, port: port, done: make(chan struct{})}
-	return id
+	return id, nil
 }
 
 func (m *flowManager) get(id string) (*managedFlow, bool) {
@@ -134,12 +141,19 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 
 	// Receiver: bind an ephemeral UDP port, drain + account inbound traffic.
 	if p.GetListen() {
+		if err := validatePacketSize(p.GetPacketSize()); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
 		lis, err := datapath.ListenUDP(":0")
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "listen: %v", err)
 		}
 		port := uint32(lis.Port())
-		id := s.mgr.configure(flow.NewReceiver(lis, int(p.GetPacketSize())), lis, port)
+		id, err := s.mgr.configure(flow.NewReceiver(lis, int(p.GetPacketSize())), lis, port)
+		if err != nil {
+			_ = lis.Close() // release the bound port we just took
+			return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+		}
 		return &loomv1.ConfigureResponse{FlowId: id, DataPort: port}, nil
 	}
 
@@ -152,7 +166,12 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "build flow: %v", err)
 	}
-	return &loomv1.ConfigureResponse{FlowId: s.mgr.configure(fl, fl.Datapath, 0)}, nil
+	id, err := s.mgr.configure(fl, fl.Datapath, 0)
+	if err != nil {
+		_ = fl.Datapath.Close() // release the datapath we just built
+		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+	}
+	return &loomv1.ConfigureResponse{FlowId: id}, nil
 }
 
 // Arm is a no-op for now (receivers/ephemeral ports arrive later).
@@ -239,6 +258,12 @@ func (s *Server) telemetryInterval() time.Duration {
 func toSpec(p *loomv1.FlowSpec) (flow.Spec, error) {
 	if p == nil {
 		return flow.Spec{}, fmt.Errorf("nil flow")
+	}
+	if err := validatePacketSize(p.GetPacketSize()); err != nil {
+		return flow.Spec{}, err
+	}
+	if err := validateTarget(p.GetTarget()); err != nil {
+		return flow.Spec{}, err
 	}
 	var dur time.Duration
 	if p.GetDuration() != "" {

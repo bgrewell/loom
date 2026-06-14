@@ -25,6 +25,10 @@ func TestParseRate(t *testing.T) {
 	if _, err := ParseRate("bogus"); err == nil {
 		t.Error("ParseRate(bogus) should error")
 	}
+	// A rate that overflows int64 must be rejected, not wrapped negative.
+	if got, err := ParseRate("99999999999G"); err == nil {
+		t.Errorf("ParseRate(overflow) = %d, want error", got)
+	}
 }
 
 func TestParseSize(t *testing.T) {
@@ -43,6 +47,12 @@ func TestParseSize(t *testing.T) {
 	}
 	if _, err := ParseSize(""); err == nil {
 		t.Error("ParseSize(empty) should error")
+	}
+	// Out-of-range / scientific values must error, not silently saturate.
+	for _, in := range []string{"1e30", "2e19", "99999999999999999999G"} {
+		if got, err := ParseSize(in); err == nil {
+			t.Errorf("ParseSize(%q) = %d, want error", in, got)
+		}
 	}
 }
 
