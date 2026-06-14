@@ -4,9 +4,9 @@
 package datapath
 
 // defaultPoolDepth is how many frames a kernel-socket backend keeps in flight.
-// The pump currently reserves one frame per iteration; the depth leaves room for
-// batched reserve/commit without per-flow memory growing with packet size.
-const defaultPoolDepth = 16
+// It matches the pump's txBatch so an unpaced flow can reserve and commit a full
+// batch in one go (amortizing the per-packet syscall).
+const defaultPoolDepth = 64
 
 // framePool provides reusable frames over a single slab for backends that copy
 // through the kernel (sockets) and so are not natively zero-copy, but still

@@ -49,37 +49,60 @@ func New(gen generator.Generator, sched scheduler.Scheduler, dp datapath.TxDatap
 	return p
 }
 
+// txBatch bounds how many packets the pump reserves/fills/commits per iteration
+// when the scheduler permits a burst (soak). A rate scheduler returns 1, so
+// paced flows are unaffected; an unpaced flow batches to amortize the per-packet
+// datapath cost (one syscall per batch instead of per packet).
+const txBatch = 64
+
 // Run drives the loop until the context is done or the generator finishes,
 // returning nil on a clean stop. It returns the datapath's error on a send
 // failure. Nothing inside the loop allocates.
 //
-// It paces one packet per iteration, reserves a frame, lets the generator fill
-// it, and commits it. Batched pacing (reserve/fill/commit N at once) is a
-// follow-on that the interface already supports.
+// Each iteration asks the scheduler how many packets may go now, reserves that
+// many datapath frames, lets the generator fill them, and commits them as one
+// batch. The generator writes straight into the datapath's frames, so a
+// zero-copy backend never copies packet bytes.
 func (p *Pump) Run(ctx context.Context) error {
 	for {
-		if !p.sched.Pace(ctx) {
+		want, ok := p.sched.Pace(ctx, txBatch)
+		if !ok {
 			return nil
 		}
-		frames := p.dp.TxReserve(1)
+		if want < 1 {
+			want = 1
+		}
+		frames := p.dp.TxReserve(want)
 		if len(frames) == 0 {
 			continue // ring momentarily full; pace and retry
 		}
-		n, done := p.gen.Next(frames[0].Data)
-		if n > 0 {
-			frames[0].Len = n
-			sent, err := p.dp.TxCommit(frames[:1])
+		count, done := 0, false
+		for i := range frames {
+			n, d := p.gen.Next(frames[i].Data)
+			if n <= 0 {
+				done = d
+				break
+			}
+			frames[i].Len = n
+			count++
+			if d {
+				done = true
+				break
+			}
+		}
+		if count > 0 {
+			sent, err := p.dp.TxCommit(frames[:count])
 			if err != nil {
 				return err
 			}
-			if sent > 0 {
-				p.acct.Add(uint64(n))
+			for i := 0; i < sent; i++ {
+				p.acct.Add(uint64(frames[i].Len))
 				if p.events != nil {
-					p.events.Push(log.Event{Code: log.EventSent, Value: uint64(n), Nanos: time.Now().UnixNano()})
+					p.events.Push(log.Event{Code: log.EventSent, Value: uint64(frames[i].Len), Nanos: time.Now().UnixNano()})
 				}
 			}
 		} else {
-			_, _ = p.dp.TxCommit(frames[:0]) // release the reserved-but-unused frame
+			_, _ = p.dp.TxCommit(frames[:0]) // release reserved-but-unused frames
 		}
 		if done {
 			return nil

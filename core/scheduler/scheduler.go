@@ -7,14 +7,18 @@ package scheduler
 
 import "context"
 
-// Scheduler decides when the next packet in a flow should be sent.
+// Scheduler decides when the next packets in a flow should be sent.
 //
-// Pace blocks until the next packet is due and returns true, or returns false
-// when the flow should stop (e.g. the context was cancelled). Implementations
-// must be allocation-free on this hot path.
+// Pace blocks until at least one packet is due, then reports how many may be
+// released now — between 1 and max — or ok=false when the flow should stop (e.g.
+// the context was cancelled). A rate scheduler returns 1 after each gap; an
+// unpaced (soak) scheduler returns max so the pump can batch sends and amortize
+// the per-packet datapath cost. Implementations must be allocation-free on this
+// hot path.
 type Scheduler interface {
 	// Name returns the scheduler's registry identifier.
 	Name() string
-	// Pace blocks until the next send is due; false means stop.
-	Pace(ctx context.Context) bool
+	// Pace blocks until a send is due and returns how many (1..max) may go now;
+	// ok=false means stop.
+	Pace(ctx context.Context, max int) (n int, ok bool)
 }

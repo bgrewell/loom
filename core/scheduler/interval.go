@@ -27,8 +27,9 @@ func NewInterval(d time.Duration) *Interval {
 // Name implements Scheduler.
 func (*Interval) Name() string { return "interval" }
 
-// Pace blocks until the next gap elapses; false means stop.
-func (i *Interval) Pace(ctx context.Context) bool {
+// Pace blocks until the next gap elapses, then releases one packet (strict
+// pacing, so max is ignored); ok=false means stop.
+func (i *Interval) Pace(ctx context.Context, _ int) (int, bool) {
 	now := i.now()
 	if i.next.IsZero() {
 		i.next = now
@@ -46,9 +47,9 @@ func (i *Interval) Pace(ctx context.Context) bool {
 	if wait <= 0 {
 		select {
 		case <-ctx.Done():
-			return false
+			return 0, false
 		default:
-			return true
+			return 1, true
 		}
 	}
 
@@ -56,8 +57,8 @@ func (i *Interval) Pace(ctx context.Context) bool {
 	defer t.Stop()
 	select {
 	case <-ctx.Done():
-		return false
+		return 0, false
 	case <-t.C:
-		return true
+		return 1, true
 	}
 }
