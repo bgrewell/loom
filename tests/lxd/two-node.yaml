@@ -63,6 +63,9 @@ setup:
       options:
         command: |
           set -euo pipefail
+          # loomd defaults to loopback-only; bind all interfaces so the host-side
+          # controller can reach the agent over the bridge.
+          export LOOMD_ADDR=":9551"
           setsid /opt/loom/loomd >/var/log/loomd.log 2>&1 </dev/null &
           # Give the agent a moment to bind, then confirm it is listening.
           for i in $(seq 1 20); do

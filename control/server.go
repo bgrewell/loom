@@ -28,6 +28,7 @@ type Server struct {
 	version   string
 	mgr       *flowManager
 	telemetry time.Duration // telemetry sample interval (0 = 1s)
+	authToken string        // shared control-plane token (empty = auth disabled)
 }
 
 // NewServer returns a control Server reporting the given version.
@@ -44,9 +45,26 @@ func (s *Server) SetTelemetryInterval(d time.Duration) { s.telemetry = d }
 // removes the limit (not recommended on a reachable agent).
 func (s *Server) SetMaxFlows(n int) { s.mgr.max = n }
 
-// NewGRPCServer builds a *grpc.Server with the control service registered.
+// SetAuthToken sets the shared control-plane token (ADR-0014). Call before
+// serving. When non-empty, NewGRPCServer installs interceptors that reject any
+// RPC lacking a matching bearer token; empty leaves the plane open.
+func (s *Server) SetAuthToken(token string) { s.authToken = token }
+
+// AuthEnabled reports whether a control-plane token is configured.
+func (s *Server) AuthEnabled() bool { return s.authToken != "" }
+
+// NewGRPCServer builds a *grpc.Server with the control service registered. When
+// the Server has an auth token set, token-checking unary/stream interceptors are
+// installed.
 func NewGRPCServer(s *Server) *grpc.Server {
-	gs := grpc.NewServer()
+	var opts []grpc.ServerOption
+	if s.authToken != "" {
+		opts = append(opts,
+			grpc.UnaryInterceptor(tokenUnaryInterceptor(s.authToken)),
+			grpc.StreamInterceptor(tokenStreamInterceptor(s.authToken)),
+		)
+	}
+	gs := grpc.NewServer(opts...)
 	loomv1.RegisterControlServer(gs, s)
 	return gs
 }

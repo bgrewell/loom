@@ -49,6 +49,7 @@ func (p Placed) Key() string { return p.AgentAddr + "/" + p.FlowID }
 type Controller struct {
 	s      *scenario.Scenario
 	addrs  map[string]string // endpoint name -> agent control address
+	token  string            // shared control-plane token (ADR-0014)
 	rng    *rand.Rand
 	agents map[string]loomv1.ControlClient
 	closes []func()
@@ -57,16 +58,33 @@ type Controller struct {
 	placed []Placed
 }
 
+// Option configures a Controller.
+type Option func(*Controller)
+
+// WithToken sets the shared control-plane token presented to every agent
+// (ADR-0014). An empty token is a no-op.
+func WithToken(token string) Option {
+	return func(c *Controller) { c.token = token }
+}
+
 // New returns a Controller for s, with addrs mapping each endpoint name to its
 // agent's control address.
-func New(s *scenario.Scenario, addrs map[string]string) *Controller {
-	return &Controller{
+func New(s *scenario.Scenario, addrs map[string]string, opts ...Option) *Controller {
+	c := &Controller{
 		s:      s,
 		addrs:  addrs,
 		rng:    rand.New(rand.NewSource(s.Seed)),
 		agents: make(map[string]loomv1.ControlClient),
 	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
 }
+
+// Token returns the controller's control-plane token, so the telemetry collector
+// can authenticate with the same credential.
+func (c *Controller) Token() string { return c.token }
 
 // Run plans the timeline and drives every fire until ctx is cancelled or the
 // timeline completes within horizon.
@@ -175,7 +193,7 @@ func (c *Controller) agentFor(endpoint string) (loomv1.ControlClient, string, er
 	if cl, ok := c.agents[addr]; ok {
 		return cl, addr, nil
 	}
-	cl, conn, err := control.Dial(addr)
+	cl, conn, err := control.Dial(addr, control.WithToken(c.token))
 	if err != nil {
 		return nil, "", err
 	}

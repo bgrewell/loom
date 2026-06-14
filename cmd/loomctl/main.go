@@ -39,6 +39,7 @@ func runCommand() *stencil.Command {
 	fs.Bool("live", "l", "stream live aggregate telemetry", true)
 	fs.Duration("interval", "i", "telemetry interval", time.Second)
 	fs.String("output", "o", "telemetry format: human|json", "human")
+	fs.String("token", "t", "control-plane auth token (default $LOOM_TOKEN)", "")
 	return &stencil.Command{
 		Name:    "run",
 		Summary: "Run a scenario file across agents",
@@ -70,7 +71,12 @@ func runScenario(ctx *stencil.Context) error {
 		addrs[k] = v
 	}
 
-	c := controller.New(sc, addrs)
+	token := ctx.Flags.String("token")
+	if token == "" {
+		token = os.Getenv("LOOM_TOKEN")
+	}
+
+	c := controller.New(sc, addrs, controller.WithToken(token))
 	defer c.Close()
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -95,7 +101,7 @@ func runScenario(ctx *stencil.Context) error {
 	// the agents over its own connections (ADR-0013); observers render them (CLI
 	// here, an API/dashboard later).
 	if ctx.Flags.Bool("live") {
-		tel := controller.NewTelemetry(ctx.Flags.Duration("interval"))
+		tel := controller.NewTelemetry(ctx.Flags.Duration("interval"), controller.WithTelemetryToken(token))
 		defer tel.Close()
 		if ctx.Flags.String("output") == "json" {
 			tel.AddObserver(controller.NewJSONObserver(os.Stdout))
