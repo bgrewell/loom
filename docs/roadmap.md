@@ -63,9 +63,15 @@ available; a web dashboard shows live flow state.
 - [ ] **ssh-session**
 - [ ] **prometheus-sender**
 - [ ] **ftp-transfer**
+- [ ] **Batch-first datapath interface** + per-packet RX metadata — do before the
+      first NIC backend ([ADR-0019](../DECISIONS.md#adr-0019--batch-first-datapath-interface),
+      [ADR-0020](../DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier))
 - [ ] **AF_PACKET datapath**
 - [ ] **AF_XDP datapath** + capability model — blueprint: datapath-backends
 - [ ] **Reporter sinks** — file/json, prometheus, socket
+- [ ] **Wire/proto discipline** — reserved ranges, FlowRole enum, version + auth
+      fields, protobuf.Duration ([ADR-0021](../DECISIONS.md#adr-0021--wireproto-evolution-discipline)) — before any external wire consumer
+- [ ] **Component DI + functional-option constructors** ([ADR-0022](../DECISIONS.md#adr-0022--inject-component-registries-functional-options-on-constructors))
 - [ ] **Web dashboard** + REST/gRPC-gateway API
 - [x] **Optional security** — shared auth token (ADR-0014): `LOOMD_TOKEN` on the
       agent, `--token`/`$LOOM_TOKEN` on loomctl; loomd defaults to loopback and

@@ -201,3 +201,95 @@ disposition in [docs/eol-plan.md](docs/eol-plan.md).
 **Consequences.** Knowledge is preserved independent of the archived repos;
 harvest-map `file:line` links keep resolving; git history is retained; the
 account gets a clean read-only attic instead of a graveyard.
+
+## ADR-0019 — Batch-first datapath interface
+**Status:** Proposed · **Date:** 2026-06-13
+
+**Context.** [DESIGN.md §5.1](DESIGN.md#51-datapath--the-packet-io-backend-driverfirmware-layer)
+specifies a batch datapath (`TxBatch(pkts [][]byte)` / `RxBatch(into [][]byte)`),
+but the Phase-1/2 implementation shipped a single-packet `Send([]byte)` /
+`Recv([]byte)` interface as the MVP. The whole point of the planned AF_XDP/DPDK
+backends (ADR-0008, Phase 3) is amortizing per-syscall/per-ring cost across a
+batch; a per-packet interface cannot express that, and `Memory.Send` already
+allocates+copies per call — the opposite of the zero-copy goal. Changing the
+interface after four backends, the contract suite, the pump, and the receiver
+exist is exactly the breaking churn ADR-0006 ("switch-free, additive") was meant
+to avoid.
+**Decision.** Move `Datapath` to batch-first (`TxBatch`/`RxBatch`) **before** the
+first real NIC backend lands, while there are no external consumers. Existing
+single-packet backends (discard/memory/udp/tcp) get a `singlePacket` adapter that
+loops internally, so the migration is mechanical. Define the **buffer-ownership
+contract** at the same time — caller-fills-then-flushes vs a pool
+`Reserve(n) [][]byte` + `Flush()` — because AF_XDP fills frames the kernel owns
+and zero-copy needs an explicit fill/flush/return-to-pool model. The pump and
+`Receiver` consume the batch interface (looping over a batch of 1 is fine until a
+backend benefits).
+**Consequences.** One deliberate interface change now instead of a forced one
+later; the hot path can be made genuinely alloc/lock/log-free per ADR-0005. Costs
+a small amount of adapter boilerplate for the trivial backends. Open sub-question
+for review: which ownership model — settle it here before implementing.
+
+## ADR-0020 — Per-packet RX metadata carrier
+**Status:** Proposed · **Date:** 2026-06-13
+
+**Context.** ADR-0010 keeps one-way-delay / hardware-timestamping for a later
+phase but commits to having the *seams* in place now so adding OWD isn't a
+retrofit. `Capabilities.HardwareTimestamps` exists, but `Recv([]byte) (int, error)`
+returns only a length — there is nowhere to surface an RX timestamp, a TX
+completion timestamp, or the source address (the receiver currently drops the
+peer addr). Loss/reorder detection (patterned payload + sequence) likewise has no
+place to read the sequence/timestamp back. Adding any of these later changes the
+datapath signature — a breaking change.
+**Decision.** Introduce an `RxMeta` (or `Packet`) value carrying `{buf, n,
+rxTimestamp, srcAddr}` and have the RX path return it (e.g. `RxBatch(into []Packet)`,
+composing with ADR-0019). Populate only `Nanos` (software timestamp) initially;
+hardware timestamps fill the same field later with no signature change. This is
+the data-carrying counterpart to the capability flag.
+**Consequences.** OWD, jitter, and loss/reorder become additive features on a
+stable interface. Slightly larger RX value type. Decide alongside ADR-0019 since
+they share the batch signature.
+
+## ADR-0021 — Wire/proto evolution discipline
+**Status:** Proposed · **Date:** 2026-06-13
+
+**Context.** The control plane is `loom.v1` (good), but the proto has gaps that
+are cheap to fix now and expensive after any consumer pins the wire: `listen` is
+a `bool` (can't grow to reflector/echo/bidirectional roles); no `reserved` ranges
+protect removed/renumbered fields; `Register`/`Health` carry no
+protocol/api-version field and no place for the ADR-0014 auth token; flow
+`duration` is a stringly-typed field re-parsed on the agent.
+**Decision.** Adopt wire discipline: (1) add `reserved` ranges to every message as
+fields evolve, starting now; (2) replace `listen bool` with
+`enum FlowRole { SENDER; RECEIVER; REFLECTOR; }`; (3) add `uint32 api_version` /
+`string protocol_version` to the handshake and an optional `string auth_token` to
+`RegisterRequest`; (4) use `google.protobuf.Duration` for durations instead of
+strings. Field-number gaps stay reserved, never reused.
+**Consequences.** The wire can evolve without breaking old agents/controllers,
+and auth/versioning have a home. One-time regen of `api/loomv1` and small
+agent/controller edits (the bool→enum touch is the only non-additive bit, done
+now while loom is the sole consumer).
+
+## ADR-0022 — Inject component registries; functional options on constructors
+**Status:** Proposed · **Date:** 2026-06-13
+
+**Context.** Datapath/generator/scheduler/payload are exposed as package-level
+`var Registry = registry.New[…]()` populated in `init()`. The generic
+`Registry[T,O]` type is sound and thread-safe, but the *global singleton* usage is
+hidden global mutable state (counter to the project's standards): registries can't
+be varied per-agent or per-test, two agents in one process share one set, and
+`Capabilities` reports whatever happens to be linked rather than what an agent is
+configured to allow. Separately, `control.NewServer(version)` accretes setters
+(`SetTelemetryInterval`, `SetMaxFlows`, `SetAuthToken`) and `flow.Build(spec)`
+hardcodes registry lookups — both are constructors-with-many-optionals that the
+project's own standard says should use functional options.
+**Decision.** Introduce a `Components` struct holding the four registries, injected
+into `flow.Build(components, spec)` and `control.NewServer`, with
+`DefaultComponents()` performing today's registration so the default path is
+unchanged. Convert the agent/server/controller constructors to functional options
+(`control.NewServer(version, WithTelemetryInterval(d), WithComponents(c),
+WithAuthToken(t))`) and inject the dialer into `controller.New` so it is testable
+without real gRPC.
+**Consequences.** Truthful per-agent capability reporting, per-test component
+sets, no global mutable state, and constructors that match the house style. A
+mechanical refactor across `flow`/`control`/`controller`; the global registries
+can remain as the `DefaultComponents()` backing during transition.
