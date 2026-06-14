@@ -161,6 +161,12 @@ type Datapath interface {
 }
 ```
 
+> **Implementation note.** The Phase-1/2 backends ship a single-packet
+> `Send`/`Recv` interface as the MVP. Moving to this batch-first shape (and adding
+> a per-packet metadata carrier for RX timestamps/source) before the first real
+> NIC backend is tracked by [ADR-0019](DECISIONS.md#adr-0019--batch-first-datapath-interface)
+> and [ADR-0020](DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier).
+
 ### 5.2 `Scheduler` — intra-flow pacing / rate control
 
 Controls inter-packet timing and rate *within* a flow (distinct from the
