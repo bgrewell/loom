@@ -149,7 +149,8 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 			return nil, status.Errorf(codes.Internal, "listen: %v", err)
 		}
 		port := uint32(lis.Port())
-		id, err := s.mgr.configure(flow.NewReceiver(lis, int(p.GetPacketSize())), lis, port)
+		rx := datapath.SinglePacketRx(lis, int(p.GetPacketSize()))
+		id, err := s.mgr.configure(flow.NewReceiver(rx), lis, port)
 		if err != nil {
 			_ = lis.Close() // release the bound port we just took
 			return nil, status.Errorf(codes.ResourceExhausted, "%v", err)

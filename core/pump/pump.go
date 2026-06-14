@@ -19,16 +19,13 @@ import (
 	"github.com/bgrewell/loom/core/scheduler"
 )
 
-const defaultMTU = 1500
-
 // Pump binds a generator, scheduler, datapath, and counters into one runnable
 // loop.
 type Pump struct {
 	gen    generator.Generator
 	sched  scheduler.Scheduler
-	dp     datapath.Datapath
+	dp     datapath.TxDatapath
 	acct   *accounting.Counters
-	mtu    int
 	events *log.Ring // optional per-packet event sink; nil disables it
 }
 
@@ -42,12 +39,10 @@ func WithEvents(r *log.Ring) Option {
 	return func(p *Pump) { p.events = r }
 }
 
-// New builds a Pump. mtu bounds the per-packet buffer; <1 uses the default.
-func New(gen generator.Generator, sched scheduler.Scheduler, dp datapath.Datapath, acct *accounting.Counters, mtu int, opts ...Option) *Pump {
-	if mtu < 1 {
-		mtu = defaultMTU
-	}
-	p := &Pump{gen: gen, sched: sched, dp: dp, acct: acct, mtu: mtu}
+// New builds a Pump over a TxDatapath. The generator writes straight into
+// datapath-owned frames, so a zero-copy backend never copies packet bytes.
+func New(gen generator.Generator, sched scheduler.Scheduler, dp datapath.TxDatapath, acct *accounting.Counters, opts ...Option) *Pump {
+	p := &Pump{gen: gen, sched: sched, dp: dp, acct: acct}
 	for _, o := range opts {
 		o(p)
 	}
@@ -57,22 +52,34 @@ func New(gen generator.Generator, sched scheduler.Scheduler, dp datapath.Datapat
 // Run drives the loop until the context is done or the generator finishes,
 // returning nil on a clean stop. It returns the datapath's error on a send
 // failure. Nothing inside the loop allocates.
+//
+// It paces one packet per iteration, reserves a frame, lets the generator fill
+// it, and commits it. Batched pacing (reserve/fill/commit N at once) is a
+// follow-on that the interface already supports.
 func (p *Pump) Run(ctx context.Context) error {
-	buf := make([]byte, p.mtu)
 	for {
 		if !p.sched.Pace(ctx) {
 			return nil
 		}
-		n, done := p.gen.Next(buf)
+		frames := p.dp.TxReserve(1)
+		if len(frames) == 0 {
+			continue // ring momentarily full; pace and retry
+		}
+		n, done := p.gen.Next(frames[0].Data)
 		if n > 0 {
-			m, err := p.dp.Send(buf[:n])
+			frames[0].Len = n
+			sent, err := p.dp.TxCommit(frames[:1])
 			if err != nil {
 				return err
 			}
-			p.acct.Add(uint64(m))
-			if p.events != nil {
-				p.events.Push(log.Event{Code: log.EventSent, Value: uint64(m), Nanos: time.Now().UnixNano()})
+			if sent > 0 {
+				p.acct.Add(uint64(n))
+				if p.events != nil {
+					p.events.Push(log.Event{Code: log.EventSent, Value: uint64(n), Nanos: time.Now().UnixNano()})
+				}
 			}
+		} else {
+			_, _ = p.dp.TxCommit(frames[:0]) // release the reserved-but-unused frame
 		}
 		if done {
 			return nil

@@ -13,26 +13,29 @@ import (
 	"github.com/bgrewell/loom/core/payload"
 )
 
-// step runs one pump iteration's work (no scheduler wait) over the discard sink,
-// optionally emitting an event — mirroring Pump.Run's hot path.
-func step(gen generator.Generator, dp datapath.Datapath, acct *accounting.Counters, buf []byte, events *log.Ring) {
-	n, _ := gen.Next(buf)
-	m, _ := dp.Send(buf[:n])
-	acct.Add(uint64(m))
+// step runs one pump iteration's work (no scheduler wait) over a TxDatapath —
+// the real reserve/fill/commit/account hot path of Pump.Run, optionally emitting
+// an event.
+func step(gen generator.Generator, dp datapath.TxDatapath, acct *accounting.Counters, events *log.Ring) {
+	frames := dp.TxReserve(1)
+	n, _ := gen.Next(frames[0].Data)
+	frames[0].Len = n
+	_, _ = dp.TxCommit(frames[:1])
+	acct.Add(uint64(n))
 	if events != nil {
-		events.Push(log.Event{Code: log.EventSent, Value: uint64(m)})
+		events.Push(log.Event{Code: log.EventSent, Value: uint64(n)})
 	}
 }
 
-func newStep() (generator.Generator, datapath.Datapath, *accounting.Counters, []byte) {
+func newStep() (generator.Generator, datapath.TxDatapath, *accounting.Counters) {
 	return generator.NewStream(payload.NewRandom(1500, 1), 1400),
-		datapath.Discard{}, &accounting.Counters{}, make([]byte, 1500)
+		datapath.SinglePacketTx(datapath.Discard{}, 1500), &accounting.Counters{}
 }
 
 // TestPumpStepZeroAllocs is the hot-path gate: a pump step must allocate nothing,
 // with logging OFF and ON. An allocation creeping in fails the build (DESIGN §6).
 func TestPumpStepZeroAllocs(t *testing.T) {
-	gen, dp, acct, buf := newStep()
+	gen, dp, acct := newStep()
 	ring := log.NewRing(4096)
 	drainNonblock := func() { // keep the ring from staying full during the run
 		for {
@@ -42,11 +45,11 @@ func TestPumpStepZeroAllocs(t *testing.T) {
 		}
 	}
 
-	if a := testing.AllocsPerRun(1000, func() { step(gen, dp, acct, buf, nil) }); a != 0 {
+	if a := testing.AllocsPerRun(1000, func() { step(gen, dp, acct, nil) }); a != 0 {
 		t.Fatalf("step (no logging) allocs = %v, want 0", a)
 	}
 	if a := testing.AllocsPerRun(1000, func() {
-		step(gen, dp, acct, buf, ring)
+		step(gen, dp, acct, ring)
 		drainNonblock()
 	}); a != 0 {
 		t.Fatalf("step (with logging) allocs = %v, want 0", a)
@@ -56,10 +59,10 @@ func TestPumpStepZeroAllocs(t *testing.T) {
 // TestLoggingNeverBlocks asserts the logging invariant's core property: emitting
 // on the hot path never blocks, even with no drainer and a full ring.
 func TestLoggingNeverBlocks(t *testing.T) {
-	gen, dp, acct, buf := newStep()
+	gen, dp, acct := newStep()
 	ring := log.NewRing(8) // tiny; will fill immediately, never drained
 	for i := 0; i < 100000; i++ {
-		step(gen, dp, acct, buf, ring) // must not block once full
+		step(gen, dp, acct, ring) // must not block once full
 	}
 	if ring.Dropped() == 0 {
 		t.Fatal("expected drops once the ring filled")
@@ -67,21 +70,21 @@ func TestLoggingNeverBlocks(t *testing.T) {
 }
 
 func BenchmarkPumpStep(b *testing.B) {
-	gen, dp, acct, buf := newStep()
+	gen, dp, acct := newStep()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		step(gen, dp, acct, buf, nil)
+		step(gen, dp, acct, nil)
 	}
 }
 
 func BenchmarkPumpStepWithLogging(b *testing.B) {
-	gen, dp, acct, buf := newStep()
+	gen, dp, acct := newStep()
 	ring := log.NewRing(1 << 16)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		step(gen, dp, acct, buf, ring)
+		step(gen, dp, acct, ring)
 		if i&0x3fff == 0 {
 			for {
 				if _, ok := ring.Pop(); !ok {

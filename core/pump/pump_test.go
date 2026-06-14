@@ -29,7 +29,7 @@ func (g *nGen) Next(buf []byte) (int, bool) {
 
 func TestPumpRunsAndAccounts(t *testing.T) {
 	var acct accounting.Counters
-	p := New(&nGen{left: 5}, scheduler.Soak{}, datapath.Discard{}, &acct, 1500)
+	p := New(&nGen{left: 5}, scheduler.Soak{}, datapath.SinglePacketTx(datapath.Discard{}, 1500), &acct)
 	if err := p.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -41,30 +41,35 @@ func TestPumpRunsAndAccounts(t *testing.T) {
 	}
 }
 
+// TestPumpRunsOverZeroCopyArena drives the pump over the native (non-adapter)
+// zero-copy arena TxDatapath. The arena is sized to hold the whole run so the
+// single-goroutine SPSC contract is respected (no concurrent drain).
+func TestPumpRunsOverZeroCopyArena(t *testing.T) {
+	var acct accounting.Counters
+	arena := datapath.NewArena(8, 1500) // > the 4 packets we send
+	p := New(&nGen{left: 4}, scheduler.Soak{}, arena, &acct)
+	if err := p.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := acct.Packets(); got != 4 {
+		t.Fatalf("packets = %d, want 4", got)
+	}
+	// The 4 transmitted packets are now receivable from the same slab (no copy).
+	f, _ := arena.RxPoll(8)
+	if len(f) != 4 {
+		t.Fatalf("RxPoll returned %d frames, want 4", len(f))
+	}
+	arena.RxRelease(f)
+}
+
 func TestPumpStopsOnContext(t *testing.T) {
 	var acct accounting.Counters
 	// Soak generator that never finishes on its own.
 	gen := generator.NewStream(payload.NewRandom(1500, 1), 1400)
-	p := New(gen, scheduler.Soak{}, datapath.Discard{}, &acct, 1500)
+	p := New(gen, scheduler.Soak{}, datapath.SinglePacketTx(datapath.Discard{}, 1500), &acct)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := p.Run(ctx); err != nil {
 		t.Fatalf("Run on cancelled ctx: %v", err)
-	}
-}
-
-func TestPumpStepAllocFree(t *testing.T) {
-	gen := generator.NewStream(payload.NewRandom(1500, 1), 1400)
-	var acct accounting.Counters
-	dp := datapath.Discard{}
-	buf := make([]byte, 1500)
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		n, _ := gen.Next(buf)
-		m, _ := dp.Send(buf[:n])
-		acct.Add(uint64(m))
-	})
-	if allocs != 0 {
-		t.Fatalf("pump step allocations = %v, want 0", allocs)
 	}
 }

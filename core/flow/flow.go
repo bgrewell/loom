@@ -52,7 +52,10 @@ func (f *Flow) Run(ctx context.Context) error {
 		ctx, cancel = context.WithTimeout(ctx, f.Stop.After)
 		defer cancel()
 	}
-	return pump.New(gen, f.Scheduler, f.Datapath, &f.acct, f.MTU).Run(ctx)
+	// Bridge the (still single-packet) backend to the batch TX interface until
+	// each backend is natively migrated (ADR-0019). MTU sizes the frame buffer.
+	tx := datapath.SinglePacketTx(f.Datapath, f.MTU)
+	return pump.New(gen, f.Scheduler, tx, &f.acct).Run(ctx)
 }
 
 // limited wraps a generator to report done once a byte or packet bound is hit.
