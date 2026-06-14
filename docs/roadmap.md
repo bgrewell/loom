@@ -68,7 +68,9 @@ available; a web dashboard shows live flow state.
       ([ADR-0019](../DECISIONS.md#adr-0019--batch-first-datapath-interface),
       [ADR-0020](../DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier))
 - [ ] **AF_PACKET datapath**
-- [ ] **AF_XDP datapath** + capability model — blueprint: datapath-backends
+- [x] **AF_XDP datapath** (TX + RX, zero-copy over UMEM) + RawL2 capability —
+      build-tagged `afxdp`, veth-validated; end-to-end scenario/agent wiring
+      (selecting afxdp + receiver-side afxdp + iface/queue config) is a follow-up
 - [ ] **Reporter sinks** — file/json, prometheus, socket
 - [x] **Wire/proto discipline** — reserved ranges, FlowRole enum, api_version
       handshake, protobuf.Duration ([ADR-0021](../DECISIONS.md#adr-0021--wireproto-evolution-discipline)); auth rides call metadata (ADR-0014)
