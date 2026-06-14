@@ -67,6 +67,8 @@ type Telemetry struct {
 	connMu sync.Mutex
 	conns  map[string]*grpc.ClientConn
 	dialed map[string]loomv1.ControlClient
+
+	wg sync.WaitGroup // tracks subscribe goroutines so Collect can join them
 }
 
 // TelemetryOption configures a Telemetry collector.
@@ -95,8 +97,13 @@ func NewTelemetry(interval time.Duration, opts ...TelemetryOption) *Telemetry {
 	return t
 }
 
-// AddObserver registers o to receive aggregate snapshots. Call before Collect.
-func (t *Telemetry) AddObserver(o Observer) { t.observers = append(t.observers, o) }
+// AddObserver registers o to receive aggregate snapshots. Safe to call
+// concurrently with Collect; emit reads observers under the same lock.
+func (t *Telemetry) AddObserver(o Observer) {
+	t.mu.Lock()
+	t.observers = append(t.observers, o)
+	t.mu.Unlock()
+}
 
 // Close releases all telemetry connections. It is safe to call once Collect has
 // returned.
@@ -137,11 +144,13 @@ func (t *Telemetry) Collect(ctx context.Context, src placedSource) {
 		for _, p := range src.Placed() {
 			if !subscribed[p.Key()] {
 				subscribed[p.Key()] = true
+				t.wg.Add(1)
 				go t.subscribe(ctx, p)
 			}
 		}
 		select {
 		case <-ctx.Done():
+			t.wg.Wait() // join subscribers before the final emit / return
 			t.emit(time.Now())
 			return
 		case now := <-ticker.C:
@@ -151,6 +160,8 @@ func (t *Telemetry) Collect(ctx context.Context, src placedSource) {
 }
 
 func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
+	defer t.wg.Done()
+	defer func() { _ = recover() }() // a stream/codec panic must not crash the collector
 	cl, err := t.clientFor(p.AgentAddr)
 	if err != nil {
 		return

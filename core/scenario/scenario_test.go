@@ -117,3 +117,21 @@ func TestParseErrors(t *testing.T) {
 		t.Error("duplicate event name should error")
 	}
 }
+
+func TestSelectorModes(t *testing.T) {
+	// Single mode key: parsed deterministically.
+	single := "scenario: x\ntimeline: [{name: a, flow: {kind: udp}, from: {oneOf: [c1, c2]}, to: srv}]"
+	sc, err := Parse([]byte(single))
+	if err != nil {
+		t.Fatalf("single-mode selector: %v", err)
+	}
+	if got := sc.Timeline[0].From; got.Mode != "oneOf" || len(got.List) != 2 {
+		t.Fatalf("from = %+v, want mode=oneOf list=[c1 c2]", got)
+	}
+	// Multiple mode keys are ambiguous (map order is randomized) and must be
+	// rejected rather than silently picking one.
+	multi := "scenario: x\ntimeline: [{name: a, flow: {kind: udp}, from: {oneOf: [c1], allOf: [c2]}, to: srv}]"
+	if _, err := Parse([]byte(multi)); err == nil {
+		t.Error("multi-key selector should error")
+	}
+}

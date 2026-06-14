@@ -100,6 +100,11 @@ func (s *Selector) UnmarshalYAML(n *yaml.Node) error {
 	if err := n.Decode(&m); err != nil {
 		return fmt.Errorf("selector: %w", err)
 	}
+	// Exactly one mode key. Ranging over a multi-key map would keep an arbitrary
+	// entry (Go map order is randomized), making scenarios non-reproducible.
+	if len(m) != 1 {
+		return fmt.Errorf("selector: expected exactly one mode (oneOf/allOf/any), got %d", len(m))
+	}
 	for k, v := range m {
 		s.Mode, s.List = k, v
 	}
