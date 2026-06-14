@@ -14,12 +14,12 @@ func TestSoakPace(t *testing.T) {
 	if s.Name() != "soak" {
 		t.Fatalf("name = %q, want soak", s.Name())
 	}
-	if !s.Pace(context.Background()) {
-		t.Fatal("soak should always pace with a live context")
+	if n, ok := s.Pace(context.Background(), 64); !ok || n != 64 {
+		t.Fatalf("soak Pace(_,64) = (%d,%v), want (64,true) for batching", n, ok)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if s.Pace(ctx) {
+	if _, ok := s.Pace(ctx, 64); ok {
 		t.Fatal("soak should stop on a cancelled context")
 	}
 }
@@ -29,14 +29,14 @@ func TestIntervalPace(t *testing.T) {
 	if i.Name() != "interval" {
 		t.Fatalf("name = %q, want interval", i.Name())
 	}
-	// First pace is due immediately.
-	if !i.Pace(context.Background()) {
-		t.Fatal("first interval pace should fire immediately")
+	// First pace is due immediately and releases exactly one (strict pacing).
+	if n, ok := i.Pace(context.Background(), 64); !ok || n != 1 {
+		t.Fatalf("first interval Pace = (%d,%v), want (1,true)", n, ok)
 	}
 	// A subsequent pace with a cancelled context must stop, not block.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if i.Pace(ctx) {
+	if _, ok := i.Pace(ctx, 64); ok {
 		t.Fatal("interval should stop on a cancelled context")
 	}
 }
@@ -47,8 +47,8 @@ func TestIntervalReleasesOverTime(t *testing.T) {
 	start := time.Now()
 	const n = 5
 	for k := 0; k < n; k++ {
-		if !i.Pace(ctx) {
-			t.Fatalf("pace %d returned false", k)
+		if got, ok := i.Pace(ctx, 64); !ok || got != 1 {
+			t.Fatalf("pace %d = (%d,%v), want (1,true)", k, got, ok)
 		}
 	}
 	if elapsed := time.Since(start); elapsed < 6*time.Millisecond {

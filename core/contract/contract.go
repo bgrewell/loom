@@ -26,13 +26,13 @@ func Scheduler(t testing.TB, s scheduler.Scheduler) {
 	}
 	live, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if !s.Pace(live) {
-		t.Errorf("%s: Pace returned false with a live context", s.Name())
+	if n, ok := s.Pace(live, 4); !ok || n < 1 || n > 4 {
+		t.Errorf("%s: Pace(live,4) = (%d,%v), want n in [1,4], ok", s.Name(), n, ok)
 	}
 	dead, c2 := context.WithCancel(context.Background())
 	c2()
-	if s.Pace(dead) {
-		t.Errorf("%s: Pace returned true with a cancelled context", s.Name())
+	if _, ok := s.Pace(dead, 4); ok {
+		t.Errorf("%s: Pace returned ok with a cancelled context", s.Name())
 	}
 }
 

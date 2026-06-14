@@ -20,12 +20,12 @@ func TestIntervalNoBurstAfterStall(t *testing.T) {
 	i.now = func() time.Time { return cur }
 	ctx := context.Background()
 
-	if !i.Pace(ctx) { // baseline; next = base+10ms
+	if _, ok := i.Pace(ctx, 1); !ok { // baseline; next = base+10ms
 		t.Fatal("first Pace returned false")
 	}
 	// Simulate a 1s stall: we are now ~100 intervals behind.
 	cur = base.Add(time.Second)
-	if !i.Pace(ctx) {
+	if _, ok := i.Pace(ctx, 1); !ok {
 		t.Fatal("Pace after stall returned false")
 	}
 	// Without re-baselining, next would be base+20ms (still ~980ms behind) and
@@ -41,7 +41,7 @@ func TestIntervalCancel(t *testing.T) {
 	i := NewInterval(time.Hour) // long gap so Pace would block on the timer
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if i.Pace(ctx) {
-		t.Fatal("Pace should return false when ctx is cancelled")
+	if _, ok := i.Pace(ctx, 1); ok {
+		t.Fatal("Pace should return ok=false when ctx is cancelled")
 	}
 }
