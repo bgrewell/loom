@@ -59,6 +59,7 @@ type placedSource interface{ Placed() []Placed }
 // Close to release those connections when collection is done.
 type Telemetry struct {
 	interval  time.Duration
+	token     string
 	mu        sync.Mutex
 	latest    map[string]FlowSample
 	observers []Observer
@@ -68,17 +69,30 @@ type Telemetry struct {
 	dialed map[string]loomv1.ControlClient
 }
 
+// TelemetryOption configures a Telemetry collector.
+type TelemetryOption func(*Telemetry)
+
+// WithTelemetryToken sets the control-plane token (ADR-0014) used when dialing
+// agents for telemetry. An empty token is a no-op.
+func WithTelemetryToken(token string) TelemetryOption {
+	return func(t *Telemetry) { t.token = token }
+}
+
 // NewTelemetry returns a collector emitting aggregates every interval.
-func NewTelemetry(interval time.Duration) *Telemetry {
+func NewTelemetry(interval time.Duration, opts ...TelemetryOption) *Telemetry {
 	if interval <= 0 {
 		interval = time.Second
 	}
-	return &Telemetry{
+	t := &Telemetry{
 		interval: interval,
 		latest:   make(map[string]FlowSample),
 		conns:    make(map[string]*grpc.ClientConn),
 		dialed:   make(map[string]loomv1.ControlClient),
 	}
+	for _, o := range opts {
+		o(t)
+	}
+	return t
 }
 
 // AddObserver registers o to receive aggregate snapshots. Call before Collect.
@@ -104,7 +118,7 @@ func (t *Telemetry) clientFor(addr string) (loomv1.ControlClient, error) {
 	if cl, ok := t.dialed[addr]; ok {
 		return cl, nil
 	}
-	cl, conn, err := control.Dial(addr)
+	cl, conn, err := control.Dial(addr, control.WithToken(t.token))
 	if err != nil {
 		return nil, err
 	}

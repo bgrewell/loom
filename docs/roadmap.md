@@ -67,7 +67,9 @@ available; a web dashboard shows live flow state.
 - [ ] **AF_XDP datapath** + capability model — blueprint: datapath-backends
 - [ ] **Reporter sinks** — file/json, prometheus, socket
 - [ ] **Web dashboard** + REST/gRPC-gateway API
-- [ ] **Optional security** — auth token + mTLS + enrollment (ADR-0014)
+- [x] **Optional security** — shared auth token (ADR-0014): `LOOMD_TOKEN` on the
+      agent, `--token`/`$LOOM_TOKEN` on loomctl; loomd defaults to loopback and
+      warns when bound routable without a token. mTLS + enrollment still to come.
 - [ ] **DART physical-host** suite + perf baselines (needs [dart#41](https://github.com/bgrewell/dart/issues/41))
 
 ## Phase 4 — Advanced & hardening
