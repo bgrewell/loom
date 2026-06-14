@@ -63,8 +63,9 @@ available; a web dashboard shows live flow state.
 - [ ] **ssh-session**
 - [ ] **prometheus-sender**
 - [ ] **ftp-transfer**
-- [ ] **Batch-first datapath interface** + per-packet RX metadata — do before the
-      first NIC backend ([ADR-0019](../DECISIONS.md#adr-0019--batch-first-datapath-interface),
+- [x] **Batch-first datapath interface** + per-packet RX metadata — done; the
+      seam is ready for a native AF_XDP backend with no interface change
+      ([ADR-0019](../DECISIONS.md#adr-0019--batch-first-datapath-interface),
       [ADR-0020](../DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier))
 - [ ] **AF_PACKET datapath**
 - [ ] **AF_XDP datapath** + capability model — blueprint: datapath-backends

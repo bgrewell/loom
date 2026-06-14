@@ -22,7 +22,7 @@ func TestFlowStopCount(t *testing.T) {
 	f := &Flow{
 		Generator: newStream(100),
 		Scheduler: scheduler.Soak{},
-		Datapath:  datapath.Discard{},
+		Datapath:  datapath.NewDiscard(1500),
 		Stop:      Stop{Count: 100},
 	}
 	if err := f.Run(context.Background()); err != nil {
@@ -37,7 +37,7 @@ func TestFlowStopVolume(t *testing.T) {
 	f := &Flow{
 		Generator: newStream(100),
 		Scheduler: scheduler.Soak{},
-		Datapath:  datapath.Discard{},
+		Datapath:  datapath.NewDiscard(1500),
 		Stop:      Stop{Volume: 1000},
 	}
 	if err := f.Run(context.Background()); err != nil {
@@ -55,7 +55,7 @@ func TestFlowStopAfter(t *testing.T) {
 	f := &Flow{
 		Generator: newStream(1400),
 		Scheduler: scheduler.Soak{},
-		Datapath:  datapath.Discard{},
+		Datapath:  datapath.NewDiscard(1500),
 		Stop:      Stop{After: 20 * time.Millisecond},
 	}
 	start := time.Now()
@@ -74,7 +74,7 @@ func TestFlowUntilStopped(t *testing.T) {
 	f := &Flow{
 		Generator: newStream(1400),
 		Scheduler: scheduler.Soak{},
-		Datapath:  datapath.Discard{},
+		Datapath:  datapath.NewDiscard(1500),
 		// zero Stop → runs until ctx is cancelled
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)

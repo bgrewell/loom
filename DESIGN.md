@@ -161,11 +161,14 @@ type Datapath interface {
 }
 ```
 
-> **Implementation note.** The Phase-1/2 backends ship a single-packet
-> `Send`/`Recv` interface as the MVP. Moving to this batch-first shape (and adding
-> a per-packet metadata carrier for RX timestamps/source) before the first real
-> NIC backend is tracked by [ADR-0019](DECISIONS.md#adr-0019--batch-first-datapath-interface)
-> and [ADR-0020](DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier).
+> **Implementation note.** The interface is split into `TxDatapath`
+> (`TxReserve`/`TxCommit`) and `RxDatapath` (`RxPoll`/`RxRelease`) over a
+> datapath-owned `Frame`, so a zero-copy backend (AF_XDP/DPDK) hands out slices
+> aliasing its UMEM/mempool without copying packet bytes; frames carry per-packet
+> RX metadata (timestamp/source). The kernel-socket backends use a pooled-frame
+> helper; the in-process `arena` is a zero-copy loopback proving the contract. See
+> [ADR-0019](DECISIONS.md#adr-0019--batch-first-datapath-interface) and
+> [ADR-0020](DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier).
 
 ### 5.2 `Scheduler` — intra-flow pacing / rate control
 

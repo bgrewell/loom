@@ -29,7 +29,7 @@ func step(gen generator.Generator, dp datapath.TxDatapath, acct *accounting.Coun
 
 func newStep() (generator.Generator, datapath.TxDatapath, *accounting.Counters) {
 	return generator.NewStream(payload.NewRandom(1500, 1), 1400),
-		datapath.SinglePacketTx(datapath.Discard{}, 1500), &accounting.Counters{}
+		datapath.NewDiscard(1500), &accounting.Counters{}
 }
 
 // TestPumpStepZeroAllocs is the hot-path gate: a pump step must allocate nothing,

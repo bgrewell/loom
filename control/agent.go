@@ -6,6 +6,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -29,7 +30,7 @@ import (
 type managedFlow struct {
 	id   string
 	run  flow.Runner
-	dp   datapath.Datapath
+	dp   io.Closer // the flow's datapath, held for cleanup
 	port uint32
 	done chan struct{} // closed when the run goroutine returns
 
@@ -54,7 +55,7 @@ func newFlowManager() *flowManager {
 // configure registers a flow and returns its id, or an error if the agent's
 // flow limit is reached (so an unbounded Configure loop cannot exhaust memory
 // and ports). On error the caller must release run/dp.
-func (m *flowManager) configure(run flow.Runner, dp datapath.Datapath, port uint32) (string, error) {
+func (m *flowManager) configure(run flow.Runner, dp io.Closer, port uint32) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.max > 0 && len(m.flows) >= m.max {
@@ -144,13 +145,12 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 		if err := validatePacketSize(p.GetPacketSize()); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
-		lis, err := datapath.ListenUDP(":0")
+		lis, err := datapath.ListenUDP(":0", int(p.GetPacketSize()))
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "listen: %v", err)
 		}
 		port := uint32(lis.Port())
-		rx := datapath.SinglePacketRx(lis, int(p.GetPacketSize()))
-		id, err := s.mgr.configure(flow.NewReceiver(rx), lis, port)
+		id, err := s.mgr.configure(flow.NewReceiver(lis), lis, port)
 		if err != nil {
 			_ = lis.Close() // release the bound port we just took
 			return nil, status.Errorf(codes.ResourceExhausted, "%v", err)

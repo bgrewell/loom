@@ -5,33 +5,50 @@ package datapath
 
 import "net"
 
-// UDPSocket is the default kernel-stack datapath: a connected UDP socket. It is
-// the portable baseline backend (DESIGN.md §5.1); higher-rate backends
-// (AF_PACKET/AF_XDP/DPDK) arrive in later phases.
+// UDPSocket is the default kernel-stack transmit datapath: a connected UDP
+// socket. It is the portable baseline backend (DESIGN.md §5.1); kernel-bypass
+// backends (AF_XDP/DPDK) arrive in later phases. It is not zero-copy — the
+// kernel copies on write — but presents the frame interface so the hot path is
+// uniform across backends.
 type UDPSocket struct {
 	conn net.Conn
+	pool *framePool
 }
 
-// DialUDP connects a UDP socket to addr (host:port).
-func DialUDP(addr string) (*UDPSocket, error) {
+// DialUDP connects a UDP socket to addr (host:port) with frameSize-byte frames.
+func DialUDP(addr string, frameSize int) (*UDPSocket, error) {
 	c, err := net.Dial("udp", addr)
 	if err != nil {
 		return nil, err
 	}
-	return &UDPSocket{conn: c}, nil
+	return &UDPSocket{conn: c, pool: newFramePool(defaultPoolDepth, frameSize)}, nil
 }
 
-// Name implements Datapath.
+// Name implements TxDatapath.
 func (*UDPSocket) Name() string { return "udp" }
 
-// Caps implements Datapath.
+// Caps implements TxDatapath.
 func (*UDPSocket) Caps() Capabilities { return Capabilities{} }
 
-// Send writes one datagram.
-func (s *UDPSocket) Send(p []byte) (int, error) { return s.conn.Write(p) }
+// TxReserve hands out frames to fill.
+func (s *UDPSocket) TxReserve(n int) []Frame { return s.pool.take(n) }
 
-// Recv reads one datagram into p.
-func (s *UDPSocket) Recv(p []byte) (int, error) { return s.conn.Read(p) }
+// TxCommit writes each filled frame as one datagram.
+func (s *UDPSocket) TxCommit(frames []Frame) (int, error) {
+	sent := 0
+	for i := range frames {
+		if frames[i].Len <= 0 {
+			continue
+		}
+		if _, err := s.conn.Write(frames[i].Data[:frames[i].Len]); err != nil {
+			s.pool.release()
+			return sent, err
+		}
+		sent++
+	}
+	s.pool.release()
+	return sent, nil
+}
 
 // Close closes the socket.
 func (s *UDPSocket) Close() error { return s.conn.Close() }
