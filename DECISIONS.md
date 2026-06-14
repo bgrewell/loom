@@ -259,7 +259,7 @@ and fills `Src` from the datagram; NIC hardware timestamps will populate the sam
 field later with no signature change.
 
 ## ADR-0021 — Wire/proto evolution discipline
-**Status:** Proposed · **Date:** 2026-06-13
+**Status:** Accepted · **Date:** 2026-06-13 · **Resolved:** 2026-06-14
 
 **Context.** The control plane is `loom.v1` (good), but the proto has gaps that
 are cheap to fix now and expensive after any consumer pins the wire: `listen` is
@@ -277,6 +277,14 @@ strings. Field-number gaps stay reserved, never reused.
 and auth/versioning have a home. One-time regen of `api/loomv1` and small
 agent/controller edits (the bool→enum touch is the only non-additive bit, done
 now while loom is the sole consumer).
+**Resolution.** Implemented: `listen bool` → `enum FlowRole` (field 20 + name
+`reserved`; `role` added at 21, UNSPECIFIED treated as SENDER, REFLECTOR returns
+Unimplemented); `flow.duration` → `google.protobuf.Duration`; `uint32 api_version`
+added to `HealthResponse` (set to `control.APIVersion`) and `RegisterRequest`. The
+`auth_token` field was **deliberately omitted**: per-RPC authentication already
+rides call metadata via the ADR-0014 interceptor on every RPC (including
+Register), so a message field would duplicate working machinery; a future
+enrollment-token flow can add one when its semantics differ from transport auth.
 
 ## ADR-0022 — Inject component registries; functional options on constructors
 **Status:** Proposed · **Date:** 2026-06-13

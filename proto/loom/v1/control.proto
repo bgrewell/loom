@@ -5,7 +5,23 @@ syntax = "proto3";
 
 package loom.v1;
 
+import "google/protobuf/duration.proto";
+
 option go_package = "github.com/bgrewell/loom/api/loomv1;loomv1";
+
+// Wire-evolution discipline (ADR-0021): field numbers are never reused; a removed
+// field's number and name go into `reserved`. Closed sets (e.g. roles) are enums,
+// not bools, so they can grow. Authentication rides call metadata (ADR-0014), not
+// a message field.
+
+// FlowRole is what a configured flow does. UNSPECIFIED is treated as SENDER, so
+// an unset role defaults to sending.
+enum FlowRole {
+  FLOW_ROLE_UNSPECIFIED = 0;
+  FLOW_ROLE_SENDER = 1;
+  FLOW_ROLE_RECEIVER = 2;  // binds an ephemeral port and drains+accounts inbound
+  FLOW_ROLE_REFLECTOR = 3; // echoes received packets (not yet implemented)
+}
 
 // Control is the controller <-> agent control plane (DESIGN.md §8). It carries
 // coordination only; telemetry streams back on StreamTelemetry, and traffic
@@ -35,14 +51,16 @@ service Control {
 
 message HealthRequest {}
 message HealthResponse {
-  string version = 1;
+  string version = 1;     // human-readable build version
   bool ready = 2;
+  uint32 api_version = 3; // control-plane wire version the agent speaks
 }
 
 message RegisterRequest {
   string agent_id = 1;
   string hostname = 2;
   repeated string tags = 3;
+  uint32 api_version = 4; // wire version the controller speaks
 }
 message RegisterResponse {
   string session = 1;
@@ -66,14 +84,17 @@ message FlowSpec {
   uint32 packet_size = 5;
   string rate = 6; // e.g. "100Mbps"; empty = unlimited
   // Stop condition (whichever is reached first; all empty = until-stopped).
-  string duration = 10; // e.g. "10s"
-  uint64 count = 11;    // packets
-  uint64 volume = 12;   // bytes
+  google.protobuf.Duration duration = 10;
+  uint64 count = 11;  // packets
+  uint64 volume = 12; // bytes
 
-  // listen makes this a receiver: the agent binds an ephemeral UDP port,
-  // returned as ConfigureResponse.data_port, and drains+accounts inbound packets
-  // instead of generating.
-  bool listen = 20;
+  // role selects sender vs receiver (and, later, reflector). A receiver binds an
+  // ephemeral UDP port returned as ConfigureResponse.data_port and
+  // drains+accounts inbound packets instead of generating.
+  FlowRole role = 21;
+
+  reserved 20;        // was `bool listen` (replaced by role)
+  reserved "listen";
 }
 
 message ConfigureRequest {

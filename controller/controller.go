@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/types/known/durationpb"
+
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
 	"github.com/bgrewell/loom/control"
 	"github.com/bgrewell/loom/core/scenario"
@@ -172,7 +174,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 
 	// Receiver on the destination agent → ephemeral port.
 	rxCfg, err := toAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: &loomv1.FlowSpec{
-		Listen: true, Datapath: "udp", PacketSize: int32ToU32(packetSize(ev)),
+		Role: loomv1.FlowRole_FLOW_ROLE_RECEIVER, Datapath: "udp", PacketSize: int32ToU32(packetSize(ev)),
 	}})
 	if err != nil {
 		return fmt.Errorf("event %q: configure receiver: %w", ev.Name, err)
@@ -226,6 +228,7 @@ func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Rol
 // senderSpec builds the sender's FlowSpec from an event + the receiver target.
 func senderSpec(ev scenario.Event, target string) *loomv1.FlowSpec {
 	spec := &loomv1.FlowSpec{
+		Role:       loomv1.FlowRole_FLOW_ROLE_SENDER,
 		Datapath:   "udp",
 		Target:     target,
 		Generator:  "stream",
@@ -235,7 +238,7 @@ func senderSpec(ev scenario.Event, target string) *loomv1.FlowSpec {
 		spec.Rate = fmt.Sprint(v)
 	}
 	if ev.Stop.After > 0 {
-		spec.Duration = ev.Stop.After.String()
+		spec.Duration = durationpb.New(ev.Stop.After)
 	}
 	spec.Count = ev.Stop.Count
 	spec.Volume = ev.Stop.Volume
