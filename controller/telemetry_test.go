@@ -67,6 +67,30 @@ func TestTelemetryAggregatesAcrossAgents(t *testing.T) {
 	c.Teardown(context.Background())
 }
 
+type emptySource struct{}
+
+func (emptySource) Placed() []Placed { return nil }
+
+// TestTelemetryAddObserverConcurrent: AddObserver must be safe to call while
+// Collect/emit reads the observer slice, and Collect must return (joining its
+// subscribers) after ctx is cancelled. Run with -race.
+func TestTelemetryAddObserverConcurrent(t *testing.T) {
+	tel := NewTelemetry(time.Millisecond)
+	defer tel.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { tel.Collect(ctx, emptySource{}); close(done) }()
+	for i := 0; i < 200; i++ {
+		tel.AddObserver(ObserverFunc(func(Aggregate) {}))
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Collect did not return after cancel")
+	}
+}
+
 func TestObserversRender(t *testing.T) {
 	a := Aggregate{
 		At:           time.Now(),

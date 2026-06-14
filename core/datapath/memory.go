@@ -47,8 +47,8 @@ func (m *Memory) Recv(p []byte) (int, error) {
 	}
 }
 
-// Close releases the queue.
-func (m *Memory) Close() error {
-	close(m.ch)
-	return nil
-}
+// Close releases the queue. It does not close the channel: a buffered channel is
+// reclaimed by the GC once unreferenced, and closing it would panic any producer
+// still in Send (close-then-send race). It is therefore safe to call Close
+// concurrently with, or before joining, an in-flight Send.
+func (m *Memory) Close() error { return nil }

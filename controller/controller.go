@@ -98,9 +98,13 @@ func (c *Controller) Run(ctx context.Context, horizon time.Duration) error {
 		events[e.Name] = e
 	}
 
+	// timeline.Run calls onFire sequentially, so firstErr needs no lock. Each
+	// fire is wrapped so a panic in one placement is captured as an error rather
+	// than tearing down the whole run.
 	var firstErr error
 	timeline.Run(ctx, fires, time.Now(), func(f timeline.Fire) {
-		if err := c.fire(ctx, events[f.Event]); err != nil && firstErr == nil {
+		err := c.fireSafe(ctx, events[f.Event])
+		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	})
@@ -126,6 +130,17 @@ func (c *Controller) Close() {
 	for _, f := range c.closes {
 		f()
 	}
+}
+
+// fireSafe runs fire, converting a panic into an error so one bad event
+// placement cannot crash the controller.
+func (c *Controller) fireSafe(ctx context.Context, ev scenario.Event) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("event %q: panic: %v", ev.Name, r)
+		}
+	}()
+	return c.fire(ctx, ev)
 }
 
 func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {

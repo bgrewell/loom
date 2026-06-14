@@ -41,11 +41,19 @@ func (p *UDPPinger) Ping(ctx context.Context, seq uint64) (time.Duration, error)
 	if _, err := p.conn.Write(out[:]); err != nil {
 		return 0, err
 	}
+	// Read until the echo carries our sequence number, discarding stale or
+	// reordered datagrams from earlier probes. The deadline set above bounds the
+	// loop, so a missing echo returns a timeout rather than spinning.
 	buf := make([]byte, 64)
-	if _, err := p.conn.Read(buf); err != nil {
-		return 0, err
+	for {
+		n, err := p.conn.Read(buf)
+		if err != nil {
+			return 0, err
+		}
+		if n >= 8 && binary.BigEndian.Uint64(buf[:8]) == seq {
+			return time.Since(start), nil
+		}
 	}
-	return time.Since(start), nil
 }
 
 // Close releases the socket.
