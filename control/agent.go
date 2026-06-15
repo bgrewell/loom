@@ -384,6 +384,14 @@ func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Con
 		})
 	}
 
+	// Send an immediate sample so the collector gets a cumulative baseline at
+	// subscribe time (≈ flow start) rather than waiting a full interval — this is
+	// what lets an N-second run report ~N/interval lines instead of losing the
+	// first one or two.
+	if err := send(time.Now()); err != nil {
+		return err
+	}
+
 	for {
 		select {
 		case <-stream.Context().Done():
@@ -403,11 +411,17 @@ func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Con
 // started it simply never fires.
 func (mf *managedFlow) doneCh() <-chan struct{} { return mf.done }
 
+// defaultTelemetryInterval is how often an agent samples a flow's counters. It is
+// deliberately faster than a typical controller display interval (e.g. 1s) so the
+// collector always has a fresh cumulative reading to compute each display
+// interval's rate from. Override with LOOMD_TELEMETRY.
+const defaultTelemetryInterval = 250 * time.Millisecond
+
 func (s *Server) telemetryInterval() time.Duration {
 	if s.telemetry > 0 {
 		return s.telemetry
 	}
-	return time.Second
+	return defaultTelemetryInterval
 }
 
 func toSpec(p *loomv1.FlowSpec) (flow.Spec, error) {

@@ -14,14 +14,25 @@ import (
 	"github.com/bgrewell/loom/control"
 )
 
-// FlowSample is the latest telemetry for one placed flow.
+// FlowSample is the latest telemetry for one placed flow. Bytes/Packets are
+// cumulative; Nanos is the agent's timestamp for that cumulative reading;
+// BitsPerSec is the rate the controller computed for the most recent display
+// interval (see emit).
 type FlowSample struct {
 	Event      string
 	FlowID     string
 	Role       Role
 	Bytes      uint64
 	Packets    uint64
+	Nanos      int64
 	BitsPerSec float64
+}
+
+// baseline is a per-flow rate anchor: the cumulative bytes and agent timestamp at
+// the previous display tick. The next tick's rate is the delta from here.
+type baseline struct {
+	nanos int64
+	bytes uint64
 }
 
 // Aggregate is a fleet-wide telemetry snapshot at an instant: tx (senders) and
@@ -61,8 +72,11 @@ type Telemetry struct {
 	interval  time.Duration
 	token     string
 	mu        sync.Mutex
-	latest    map[string]FlowSample
-	ended     map[string]bool // flows whose telemetry stream has finished
+	latest    map[string]FlowSample // most recent cumulative reading per flow
+	prev      map[string]baseline   // rate anchor advanced each display tick
+	ended     map[string]bool       // flows whose telemetry stream has finished
+	lastRate  map[string]float64    // last computed rate per flow (for snapshots)
+	frozen    bool                  // when set, emit stops notifying observers
 	observers []Observer
 
 	connMu sync.Mutex
@@ -89,7 +103,9 @@ func NewTelemetry(interval time.Duration, opts ...TelemetryOption) *Telemetry {
 	t := &Telemetry{
 		interval: interval,
 		latest:   make(map[string]FlowSample),
+		prev:     make(map[string]baseline),
 		ended:    make(map[string]bool),
+		lastRate: make(map[string]float64),
 		conns:    make(map[string]*grpc.ClientConn),
 		dialed:   make(map[string]loomv1.ControlClient),
 	}
@@ -137,11 +153,27 @@ func (t *Telemetry) clientFor(addr string) (loomv1.ControlClient, error) {
 }
 
 // Collect subscribes to every flow src has placed (including ones placed later)
-// and emits aggregate snapshots until ctx is cancelled.
+// and emits an aggregate every interval until ctx is cancelled.
+//
+// Subscription is eager (a fast poll, decoupled from the display interval) so a
+// flow's telemetry stream opens essentially at flow start — otherwise the first
+// second or two of traffic would be missed and the run would show fewer lines
+// than its duration. The display clock is a single ticker that starts on the
+// first received sample and aligns subsequent ticks to it, so an N-second run at
+// interval I shows ~N/I lines. There is no emit on cancel: the run's summary
+// already reports the final totals, and a trailing zero-rate line would just be
+// noise.
 func (t *Telemetry) Collect(ctx context.Context, src placedSource) {
 	subscribed := make(map[string]bool)
-	ticker := time.NewTicker(t.interval)
-	defer ticker.Stop()
+	sub := time.NewTicker(25 * time.Millisecond) // eager subscription poll
+	defer sub.Stop()
+	var emit *time.Ticker
+	var emitC <-chan time.Time
+	defer func() {
+		if emit != nil {
+			emit.Stop()
+		}
+	}()
 	for {
 		for _, p := range src.Placed() {
 			if !subscribed[p.Key()] {
@@ -150,15 +182,29 @@ func (t *Telemetry) Collect(ctx context.Context, src placedSource) {
 				go t.subscribe(ctx, p)
 			}
 		}
+		// Start the display clock only once data is flowing, so the first line is
+		// real traffic and ticks line up with the agents' samples.
+		if emitC == nil && t.hasData() {
+			emit = time.NewTicker(t.interval)
+			emitC = emit.C
+		}
 		select {
 		case <-ctx.Done():
-			t.wg.Wait() // join subscribers before the final emit / return
-			t.emit(time.Now())
+			t.wg.Wait() // join subscribers before returning
 			return
-		case now := <-ticker.C:
+		case <-sub.C:
+			// loop to pick up newly placed flows
+		case now := <-emitC:
 			t.emit(now)
 		}
 	}
+}
+
+// hasData reports whether any flow has produced a sample yet.
+func (t *Telemetry) hasData() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.latest) > 0
 }
 
 func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
@@ -175,23 +221,25 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 	for {
 		s, err := stream.Recv()
 		if err != nil {
-			// The stream ended: the flow finished (or the agent went away). Zero its
-			// live rate so a completed flow stops inflating the aggregate every tick,
-			// but keep its cumulative bytes/packets in the totals. Mark it ended so
-			// the run can stop as soon as every source flow has finished.
+			// The stream ended: the flow finished (or the agent went away). Mark it
+			// ended so the run can stop once every source flow has finished. The rate
+			// settles to 0 on its own — emit sees no newer sample and reports no
+			// movement — while cumulative bytes remain for the totals.
 			t.mu.Lock()
-			if fs, ok := t.latest[p.Key()]; ok {
-				fs.BitsPerSec = 0
-				t.latest[p.Key()] = fs
-			}
 			t.ended[p.Key()] = true
 			t.mu.Unlock()
 			return
 		}
 		t.mu.Lock()
-		t.latest[p.Key()] = FlowSample{
+		key := p.Key()
+		// Seed the rate anchor on the first sample so the first interval measures
+		// from here, not from a zero baseline at the unix epoch.
+		if _, ok := t.prev[key]; !ok {
+			t.prev[key] = baseline{nanos: s.GetNanos(), bytes: s.GetBytes()}
+		}
+		t.latest[key] = FlowSample{
 			Event: p.Event, FlowID: p.FlowID, Role: p.Role,
-			Bytes: s.GetBytes(), Packets: s.GetPackets(), BitsPerSec: s.GetBitsPerSec(),
+			Bytes: s.GetBytes(), Packets: s.GetPackets(), Nanos: s.GetNanos(),
 		}
 		t.mu.Unlock()
 	}
@@ -229,9 +277,46 @@ func (t *Telemetry) WaitSources(ctx context.Context, src placedSource) bool {
 	}
 }
 
+// emit computes each flow's rate for this display interval from the cumulative
+// counters (using the agents' own timestamps, so the rate is accurate regardless
+// of clock drift), advances the rate anchors, and notifies observers. This is the
+// single clock that paces the display.
+// Freeze stops emit from notifying observers, so no more live lines print. The
+// collector keeps ingesting samples (for an accurate final Snapshot); this just
+// ends the display once the run is over, keeping the line count equal to the
+// run's duration/interval regardless of drain/teardown timing.
+func (t *Telemetry) Freeze() {
+	t.mu.Lock()
+	t.frozen = true
+	t.mu.Unlock()
+}
+
 func (t *Telemetry) emit(now time.Time) {
 	t.mu.Lock()
-	agg := t.aggregateLocked(now)
+	if t.frozen {
+		t.mu.Unlock()
+		return
+	}
+	agg := Aggregate{At: now, Flows: make([]FlowSample, 0, len(t.latest))}
+	for key, fs := range t.latest {
+		bps := 0.0
+		if p, ok := t.prev[key]; ok && fs.Nanos > p.nanos && fs.Bytes >= p.bytes {
+			if dt := float64(fs.Nanos-p.nanos) / 1e9; dt > 0 {
+				bps = float64(fs.Bytes-p.bytes) * 8 / dt
+			}
+		}
+		t.prev[key] = baseline{nanos: fs.Nanos, bytes: fs.Bytes} // advance the anchor
+		t.lastRate[key] = bps
+		fs.BitsPerSec = bps
+		agg.Flows = append(agg.Flows, fs)
+		if fs.Role == Receiver || fs.Role == Requester {
+			agg.RxBitsPerSec += bps
+			agg.RxBytes += fs.Bytes
+		} else {
+			agg.TxBitsPerSec += bps
+			agg.TxBytes += fs.Bytes
+		}
+	}
 	obs := t.observers
 	t.mu.Unlock()
 	for _, o := range obs {
@@ -239,26 +324,19 @@ func (t *Telemetry) emit(now time.Time) {
 	}
 }
 
-// Snapshot returns the current aggregate without notifying observers — used for
-// the end-of-run summary.
+// Snapshot returns the current cumulative totals without advancing the rate
+// anchors or notifying observers — used for the end-of-run summary, which reports
+// totals and averages over elapsed (not an instantaneous rate).
 func (t *Telemetry) Snapshot() Aggregate {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.aggregateLocked(time.Now())
-}
-
-// aggregateLocked rolls the latest per-flow samples into one snapshot. The caller
-// holds t.mu. The download receiver (Receiver/Requester) counts as Rx; the sender
-// (Sender/Responder) as Tx.
-func (t *Telemetry) aggregateLocked(now time.Time) Aggregate {
-	agg := Aggregate{At: now, Flows: make([]FlowSample, 0, len(t.latest))}
-	for _, fs := range t.latest {
+	agg := Aggregate{At: time.Now(), Flows: make([]FlowSample, 0, len(t.latest))}
+	for key, fs := range t.latest {
+		fs.BitsPerSec = t.lastRate[key]
 		agg.Flows = append(agg.Flows, fs)
 		if fs.Role == Receiver || fs.Role == Requester {
-			agg.RxBitsPerSec += fs.BitsPerSec
 			agg.RxBytes += fs.Bytes
 		} else {
-			agg.TxBitsPerSec += fs.BitsPerSec
 			agg.TxBytes += fs.Bytes
 		}
 	}
