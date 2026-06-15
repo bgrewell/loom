@@ -42,6 +42,22 @@ const (
 	Requester
 )
 
+// String renders a Role for display.
+func (r Role) String() string {
+	switch r {
+	case Sender:
+		return "sender"
+	case Receiver:
+		return "receiver"
+	case Responder:
+		return "responder"
+	case Requester:
+		return "requester"
+	default:
+		return "unknown"
+	}
+}
+
 // Placed is one configured flow on an agent. FlowIDs are only unique per agent,
 // so AgentAddr+FlowID is the global key.
 type Placed struct {

@@ -72,11 +72,17 @@ The controller. Reads a scenario and drives it across agents.
 |---|---|---|
 | `-f, --scenario` | _(required)_ | scenario YAML file |
 | `-a, --agent` | _(none)_ | `endpoint=host:port` pairs, comma-separated |
-| `--horizon` | `30s` | how long to drive the timeline |
+| `--horizon` | `30s` | upper bound on the run; an end-of-test scenario stops here |
 | `-l, --live` | `true` | stream live aggregate telemetry |
+| `-p, --per-flow` | `false` | show per-flow throughput (live and in the summary) |
 | `-i, --interval` | `1s` | telemetry interval |
 | `-o, --output` | `human` | telemetry format: `human` \| `json` |
 | `-t, --token` | `$LOOM_TOKEN` | control-plane auth token |
+
+The run stops as soon as its bounded flows finish (so a 10s flow takes ~10s, not
+the full `--horizon`); `--horizon` only caps an unbounded `end-of-test` scenario.
+It ends with a summary (tx/rx totals and average throughput); `--per-flow` adds a
+line per flow.
 
 ```console
 loomctl run -f scenario.yaml \

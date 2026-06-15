@@ -62,6 +62,7 @@ type Telemetry struct {
 	token     string
 	mu        sync.Mutex
 	latest    map[string]FlowSample
+	ended     map[string]bool // flows whose telemetry stream has finished
 	observers []Observer
 
 	connMu sync.Mutex
@@ -88,6 +89,7 @@ func NewTelemetry(interval time.Duration, opts ...TelemetryOption) *Telemetry {
 	t := &Telemetry{
 		interval: interval,
 		latest:   make(map[string]FlowSample),
+		ended:    make(map[string]bool),
 		conns:    make(map[string]*grpc.ClientConn),
 		dialed:   make(map[string]loomv1.ControlClient),
 	}
@@ -173,6 +175,17 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 	for {
 		s, err := stream.Recv()
 		if err != nil {
+			// The stream ended: the flow finished (or the agent went away). Zero its
+			// live rate so a completed flow stops inflating the aggregate every tick,
+			// but keep its cumulative bytes/packets in the totals. Mark it ended so
+			// the run can stop as soon as every source flow has finished.
+			t.mu.Lock()
+			if fs, ok := t.latest[p.Key()]; ok {
+				fs.BitsPerSec = 0
+				t.latest[p.Key()] = fs
+			}
+			t.ended[p.Key()] = true
+			t.mu.Unlock()
 			return
 		}
 		t.mu.Lock()
@@ -184,8 +197,60 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 	}
 }
 
+// WaitSources blocks until every source flow (Sender/Requester) currently placed
+// by src has finished streaming, or ctx is done. It returns true if all sources
+// completed, false on ctx cancellation. A scenario with no bounded source flows
+// (e.g. an all-receiver or end-of-test run) never completes on its own, so this
+// waits for ctx.
+func (t *Telemetry) WaitSources(ctx context.Context, src placedSource) bool {
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		placed := src.Placed()
+		sources, done := 0, 0
+		t.mu.Lock()
+		for _, p := range placed {
+			if p.Role == Sender || p.Role == Requester {
+				sources++
+				if t.ended[p.Key()] {
+					done++
+				}
+			}
+		}
+		t.mu.Unlock()
+		if sources > 0 && done == sources {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+		}
+	}
+}
+
 func (t *Telemetry) emit(now time.Time) {
 	t.mu.Lock()
+	agg := t.aggregateLocked(now)
+	obs := t.observers
+	t.mu.Unlock()
+	for _, o := range obs {
+		o.Observe(agg)
+	}
+}
+
+// Snapshot returns the current aggregate without notifying observers — used for
+// the end-of-run summary.
+func (t *Telemetry) Snapshot() Aggregate {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.aggregateLocked(time.Now())
+}
+
+// aggregateLocked rolls the latest per-flow samples into one snapshot. The caller
+// holds t.mu. The download receiver (Receiver/Requester) counts as Rx; the sender
+// (Sender/Responder) as Tx.
+func (t *Telemetry) aggregateLocked(now time.Time) Aggregate {
 	agg := Aggregate{At: now, Flows: make([]FlowSample, 0, len(t.latest))}
 	for _, fs := range t.latest {
 		agg.Flows = append(agg.Flows, fs)
@@ -197,9 +262,5 @@ func (t *Telemetry) emit(now time.Time) {
 			agg.TxBytes += fs.Bytes
 		}
 	}
-	obs := t.observers
-	t.mu.Unlock()
-	for _, o := range obs {
-		o.Observe(agg)
-	}
+	return agg
 }
