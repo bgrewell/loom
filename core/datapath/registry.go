@@ -21,10 +21,13 @@ type Options struct {
 // defaultMemorySize is used when Options.Size is unset for the memory datapath.
 const defaultMemorySize = 1024
 
-// Registry holds the available transmit-datapath factories by name. Receive-side
-// datapaths (e.g. the UDP listener) are constructed directly, not via the
-// registry.
+// Registry holds the available transmit-datapath factories by name.
 var Registry = registry.New[TxDatapath, Options]()
+
+// RxRegistry holds the available receive-datapath factories by name, so the
+// agent can pick a receiver backend (udp listener, afxdp, …) without importing
+// each directly — build-tagged backends register here under their tag.
+var RxRegistry = registry.New[RxDatapath, Options]()
 
 func init() {
 	Registry.Register("memory", func(o Options) (TxDatapath, error) {
@@ -42,5 +45,10 @@ func init() {
 	})
 	Registry.Register("tcp", func(o Options) (TxDatapath, error) {
 		return DialTCP(o.Addr, o.FrameSize)
+	})
+
+	// Receive side. ":0" binds an ephemeral UDP port (read back via Port()).
+	RxRegistry.Register("udp", func(o Options) (RxDatapath, error) {
+		return ListenUDP(":0", o.FrameSize)
 	})
 }

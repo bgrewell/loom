@@ -143,19 +143,30 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 		return nil, status.Error(codes.Unimplemented, "reflector role not yet supported")
 	}
 
-	// Receiver: bind an ephemeral UDP port, drain + account inbound traffic.
+	// Receiver: build the requested receive datapath, drain + account inbound
+	// traffic. A UDP listener reports its ephemeral port; afxdp binds a NIC queue
+	// and has none (data_port stays 0).
 	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_RECEIVER {
 		if err := validatePacketSize(p.GetPacketSize()); err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
-		lis, err := datapath.ListenUDP(":0", int(p.GetPacketSize()))
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "listen: %v", err)
+		dname := p.GetDatapath()
+		if dname == "" {
+			dname = "udp"
 		}
-		port := uint32(lis.Port())
-		id, err := s.mgr.configure(flow.NewReceiver(lis), lis, port)
+		rx, err := datapath.RxRegistry.Build(dname, datapath.Options{
+			FrameSize: int(p.GetPacketSize()), Iface: p.GetIface(), Queue: int(p.GetQueue()),
+		})
 		if err != nil {
-			_ = lis.Close() // release the bound port we just took
+			return nil, status.Errorf(codes.InvalidArgument, "build receiver: %v", err)
+		}
+		var port uint32
+		if pr, ok := rx.(interface{ Port() int }); ok {
+			port = uint32(pr.Port())
+		}
+		id, err := s.mgr.configure(flow.NewReceiver(rx), rx, port)
+		if err != nil {
+			_ = rx.Close() // release the bound port/queue we just took
 			return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
 		}
 		return &loomv1.ConfigureResponse{FlowId: id, DataPort: port}, nil
@@ -278,6 +289,8 @@ func toSpec(p *loomv1.FlowSpec) (flow.Spec, error) {
 		Payload:    p.GetPayload(),
 		Datapath:   p.GetDatapath(),
 		Target:     p.GetTarget(),
+		Iface:      p.GetIface(),
+		Queue:      int(p.GetQueue()),
 		PacketSize: int(p.GetPacketSize()),
 		Rate:       p.GetRate(),
 		Duration:   dur,

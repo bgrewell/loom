@@ -172,9 +172,16 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return err
 	}
 
-	// Receiver on the destination agent → ephemeral port.
+	dp := ev.Datapath
+	if dp == "" {
+		dp = "udp"
+	}
+
+	// Receiver on the destination agent. A UDP listener returns an ephemeral
+	// port; a NIC-bound datapath (afxdp) uses the endpoint's iface/queue.
 	rxCfg, err := toAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: &loomv1.FlowSpec{
-		Role: loomv1.FlowRole_FLOW_ROLE_RECEIVER, Datapath: "udp", PacketSize: int32ToU32(packetSize(ev)),
+		Role: loomv1.FlowRole_FLOW_ROLE_RECEIVER, Datapath: dp,
+		PacketSize: int32ToU32(packetSize(ev)), Iface: to.Iface, Queue: int32ToU32(to.Queue),
 	}})
 	if err != nil {
 		return fmt.Errorf("event %q: configure receiver: %w", ev.Name, err)
@@ -184,14 +191,18 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 	}
 	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name)
 
-	// Sender on the source agent, targeting the receiver's data address.
-	dataHost := to.Address
-	if dataHost == "" {
-		dataHost = hostOf(toAddr)
+	// Sender on the source agent. Socket datapaths target the receiver's data
+	// address; NIC-bound datapaths (afxdp, raw L2) ignore it and use the iface.
+	var target string
+	if dp != "afxdp" {
+		dataHost := to.Address
+		if dataHost == "" {
+			dataHost = hostOf(toAddr)
+		}
+		target = net.JoinHostPort(dataHost, strconv.Itoa(int(rxCfg.GetDataPort())))
 	}
-	target := net.JoinHostPort(dataHost, strconv.Itoa(int(rxCfg.GetDataPort())))
 
-	txCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: senderSpec(ev, target)})
+	txCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: senderSpec(ev, dp, target, from)})
 	if err != nil {
 		return fmt.Errorf("event %q: configure sender: %w", ev.Name, err)
 	}
@@ -225,14 +236,18 @@ func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Rol
 	c.placed = append(c.placed, Placed{Agent: agent, AgentAddr: addr, FlowID: id, Role: role, Event: event})
 }
 
-// senderSpec builds the sender's FlowSpec from an event + the receiver target.
-func senderSpec(ev scenario.Event, target string) *loomv1.FlowSpec {
+// senderSpec builds the sender's FlowSpec from an event, the chosen datapath,
+// the receiver target (socket datapaths), and the source endpoint (iface/queue
+// for NIC-bound datapaths).
+func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint) *loomv1.FlowSpec {
 	spec := &loomv1.FlowSpec{
 		Role:       loomv1.FlowRole_FLOW_ROLE_SENDER,
-		Datapath:   "udp",
+		Datapath:   dp,
 		Target:     target,
 		Generator:  "stream",
 		PacketSize: int32ToU32(packetSize(ev)),
+		Iface:      from.Iface,
+		Queue:      int32ToU32(from.Queue),
 	}
 	if v, ok := ev.Flow.Params["rate"]; ok {
 		spec.Rate = fmt.Sprint(v)

@@ -1,0 +1,35 @@
+# Example: an AF_XDP flow selected end to end via a scenario.
+#
+# `datapath: afxdp` on the event picks the kernel-bypass backend; each endpoint's
+# `iface` (and optional `queue`) names the NIC that endpoint uses. AF_XDP is raw
+# layer 2 and needs root + a NIC (or veth), and loomd must be built with the
+# afxdp tag (`go build -tags afxdp ./cmd/loomd`); a default loomd returns
+# InvalidArgument for `datapath: afxdp`.
+#
+# To try it over a veth pair (one host, both ends):
+#   sudo ip link add loomxdp0 type veth peer name loomxdp1
+#   sudo ip link set loomxdp0 up && sudo ip link set loomxdp1 up
+#   sudo LOOMD_ADDR=:9551  ./loomd   # agent for tx (and rx here, same host)
+#   ./loomctl run -f docs/examples/afxdp-veth.scenario.yaml -a 'tx=127.0.0.1:9551,rx=127.0.0.1:9551'
+#   sudo ip link del loomxdp0
+scenario: afxdp-veth
+description: one AF_XDP flow from tx (loomxdp0) to rx (loomxdp1)
+seed: 1
+
+endpoints:
+  - name: tx
+    iface: loomxdp0
+  - name: rx
+    iface: loomxdp1
+
+timeline:
+  - name: blast
+    flow:
+      kind: udp
+      packet_size: 1000
+    datapath: afxdp
+    from: tx
+    to: rx
+    start: 0s
+    stop:
+      after: 5s

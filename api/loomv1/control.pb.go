@@ -407,7 +407,9 @@ type FlowSpec struct {
 	Datapath   string                 `protobuf:"bytes,3,opt,name=datapath,proto3" json:"datapath,omitempty"`
 	Target     string                 `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"` // host:port for udp/tcp
 	PacketSize uint32                 `protobuf:"varint,5,opt,name=packet_size,json=packetSize,proto3" json:"packet_size,omitempty"`
-	Rate       string                 `protobuf:"bytes,6,opt,name=rate,proto3" json:"rate,omitempty"` // e.g. "100Mbps"; empty = unlimited
+	Rate       string                 `protobuf:"bytes,6,opt,name=rate,proto3" json:"rate,omitempty"`    // e.g. "100Mbps"; empty = unlimited
+	Iface      string                 `protobuf:"bytes,7,opt,name=iface,proto3" json:"iface,omitempty"`  // NIC name for the afxdp datapath
+	Queue      uint32                 `protobuf:"varint,8,opt,name=queue,proto3" json:"queue,omitempty"` // NIC queue for the afxdp datapath
 	// Stop condition (whichever is reached first; all empty = until-stopped).
 	Duration *durationpb.Duration `protobuf:"bytes,10,opt,name=duration,proto3" json:"duration,omitempty"`
 	Count    uint64               `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`   // packets
@@ -490,6 +492,20 @@ func (x *FlowSpec) GetRate() string {
 		return x.Rate
 	}
 	return ""
+}
+
+func (x *FlowSpec) GetIface() string {
+	if x != nil {
+		return x.Iface
+	}
+	return ""
+}
+
+func (x *FlowSpec) GetQueue() uint32 {
+	if x != nil {
+		return x.Queue
+	}
+	return 0
 }
 
 func (x *FlowSpec) GetDuration() *durationpb.Duration {
@@ -1191,7 +1207,7 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"schedulers\x18\x03 \x03(\tR\n" +
 	"schedulers\x12\x1a\n" +
 	"\bpayloads\x18\x04 \x03(\tR\bpayloads\x12/\n" +
-	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\xc5\x02\n" +
+	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\xf1\x02\n" +
 	"\bFlowSpec\x12\x1c\n" +
 	"\tgenerator\x18\x01 \x01(\tR\tgenerator\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\tR\apayload\x12\x1a\n" +
@@ -1199,7 +1215,9 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x06target\x18\x04 \x01(\tR\x06target\x12\x1f\n" +
 	"\vpacket_size\x18\x05 \x01(\rR\n" +
 	"packetSize\x12\x12\n" +
-	"\x04rate\x18\x06 \x01(\tR\x04rate\x125\n" +
+	"\x04rate\x18\x06 \x01(\tR\x04rate\x12\x14\n" +
+	"\x05iface\x18\a \x01(\tR\x05iface\x12\x14\n" +
+	"\x05queue\x18\b \x01(\rR\x05queue\x125\n" +
 	"\bduration\x18\n" +
 	" \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x14\n" +
 	"\x05count\x18\v \x01(\x04R\x05count\x12\x16\n" +
