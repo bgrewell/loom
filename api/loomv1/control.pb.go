@@ -410,10 +410,15 @@ type FlowSpec struct {
 	Rate       string                 `protobuf:"bytes,6,opt,name=rate,proto3" json:"rate,omitempty"`    // e.g. "100Mbps"; empty = unlimited
 	Iface      string                 `protobuf:"bytes,7,opt,name=iface,proto3" json:"iface,omitempty"`  // NIC name for the afxdp datapath
 	Queue      uint32                 `protobuf:"varint,8,opt,name=queue,proto3" json:"queue,omitempty"` // NIC queue for the afxdp datapath
+	// emulation names an application-behavior emulation (e.g. "voip-call",
+	// "https-browse"); empty = a raw flow. params are its tuning knobs.
+	Emulation string `protobuf:"bytes,9,opt,name=emulation,proto3" json:"emulation,omitempty"`
 	// Stop condition (whichever is reached first; all empty = until-stopped).
 	Duration *durationpb.Duration `protobuf:"bytes,10,opt,name=duration,proto3" json:"duration,omitempty"`
-	Count    uint64               `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`   // packets
-	Volume   uint64               `protobuf:"varint,12,opt,name=volume,proto3" json:"volume,omitempty"` // bytes
+	Count    uint64               `protobuf:"varint,11,opt,name=count,proto3" json:"count,omitempty"`                                                                            // packets
+	Volume   uint64               `protobuf:"varint,12,opt,name=volume,proto3" json:"volume,omitempty"`                                                                          // bytes
+	Params   map[string]string    `protobuf:"bytes,13,rep,name=params,proto3" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // emulation parameters
+	Seed     int64                `protobuf:"varint,14,opt,name=seed,proto3" json:"seed,omitempty"`                                                                              // RNG seed for reproducible emulated shapes
 	// role selects sender vs receiver (and, later, reflector). A receiver binds an
 	// ephemeral UDP port returned as ConfigureResponse.data_port and
 	// drains+accounts inbound packets instead of generating.
@@ -508,6 +513,13 @@ func (x *FlowSpec) GetQueue() uint32 {
 	return 0
 }
 
+func (x *FlowSpec) GetEmulation() string {
+	if x != nil {
+		return x.Emulation
+	}
+	return ""
+}
+
 func (x *FlowSpec) GetDuration() *durationpb.Duration {
 	if x != nil {
 		return x.Duration
@@ -525,6 +537,20 @@ func (x *FlowSpec) GetCount() uint64 {
 func (x *FlowSpec) GetVolume() uint64 {
 	if x != nil {
 		return x.Volume
+	}
+	return 0
+}
+
+func (x *FlowSpec) GetParams() map[string]string {
+	if x != nil {
+		return x.Params
+	}
+	return nil
+}
+
+func (x *FlowSpec) GetSeed() int64 {
+	if x != nil {
+		return x.Seed
 	}
 	return 0
 }
@@ -1207,7 +1233,7 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"schedulers\x18\x03 \x03(\tR\n" +
 	"schedulers\x12\x1a\n" +
 	"\bpayloads\x18\x04 \x03(\tR\bpayloads\x12/\n" +
-	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\xf1\x02\n" +
+	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\x95\x04\n" +
 	"\bFlowSpec\x12\x1c\n" +
 	"\tgenerator\x18\x01 \x01(\tR\tgenerator\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\tR\apayload\x12\x1a\n" +
@@ -1217,12 +1243,18 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"packetSize\x12\x12\n" +
 	"\x04rate\x18\x06 \x01(\tR\x04rate\x12\x14\n" +
 	"\x05iface\x18\a \x01(\tR\x05iface\x12\x14\n" +
-	"\x05queue\x18\b \x01(\rR\x05queue\x125\n" +
+	"\x05queue\x18\b \x01(\rR\x05queue\x12\x1c\n" +
+	"\temulation\x18\t \x01(\tR\temulation\x125\n" +
 	"\bduration\x18\n" +
 	" \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x14\n" +
 	"\x05count\x18\v \x01(\x04R\x05count\x12\x16\n" +
-	"\x06volume\x18\f \x01(\x04R\x06volume\x12%\n" +
-	"\x04role\x18\x15 \x01(\x0e2\x11.loom.v1.FlowRoleR\x04roleJ\x04\b\x14\x10\x15R\x06listen\"9\n" +
+	"\x06volume\x18\f \x01(\x04R\x06volume\x125\n" +
+	"\x06params\x18\r \x03(\v2\x1d.loom.v1.FlowSpec.ParamsEntryR\x06params\x12\x12\n" +
+	"\x04seed\x18\x0e \x01(\x03R\x04seed\x12%\n" +
+	"\x04role\x18\x15 \x01(\x0e2\x11.loom.v1.FlowRoleR\x04role\x1a9\n" +
+	"\vParamsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x14\x10\x15R\x06listen\"9\n" +
 	"\x10ConfigureRequest\x12%\n" +
 	"\x04flow\x18\x01 \x01(\v2\x11.loom.v1.FlowSpecR\x04flow\"I\n" +
 	"\x11ConfigureResponse\x12\x17\n" +
@@ -1286,7 +1318,7 @@ func file_proto_loom_v1_control_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_loom_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_loom_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_proto_loom_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_proto_loom_v1_control_proto_goTypes = []any{
 	(FlowRole)(0),                // 0: loom.v1.FlowRole
 	(*HealthRequest)(nil),        // 1: loom.v1.HealthRequest
@@ -1310,37 +1342,39 @@ var file_proto_loom_v1_control_proto_goTypes = []any{
 	(*TimeSyncResponse)(nil),     // 19: loom.v1.TimeSyncResponse
 	(*TelemetryRequest)(nil),     // 20: loom.v1.TelemetryRequest
 	(*TelemetrySample)(nil),      // 21: loom.v1.TelemetrySample
-	(*durationpb.Duration)(nil),  // 22: google.protobuf.Duration
+	nil,                          // 22: loom.v1.FlowSpec.ParamsEntry
+	(*durationpb.Duration)(nil),  // 23: google.protobuf.Duration
 }
 var file_proto_loom_v1_control_proto_depIdxs = []int32{
-	22, // 0: loom.v1.FlowSpec.duration:type_name -> google.protobuf.Duration
-	0,  // 1: loom.v1.FlowSpec.role:type_name -> loom.v1.FlowRole
-	7,  // 2: loom.v1.ConfigureRequest.flow:type_name -> loom.v1.FlowSpec
-	1,  // 3: loom.v1.Control.Health:input_type -> loom.v1.HealthRequest
-	3,  // 4: loom.v1.Control.Register:input_type -> loom.v1.RegisterRequest
-	5,  // 5: loom.v1.Control.Capabilities:input_type -> loom.v1.CapabilitiesRequest
-	8,  // 6: loom.v1.Control.Configure:input_type -> loom.v1.ConfigureRequest
-	10, // 7: loom.v1.Control.Arm:input_type -> loom.v1.ArmRequest
-	12, // 8: loom.v1.Control.Start:input_type -> loom.v1.StartRequest
-	14, // 9: loom.v1.Control.Stop:input_type -> loom.v1.StopRequest
-	16, // 10: loom.v1.Control.Destroy:input_type -> loom.v1.DestroyRequest
-	18, // 11: loom.v1.Control.TimeSync:input_type -> loom.v1.TimeSyncRequest
-	20, // 12: loom.v1.Control.StreamTelemetry:input_type -> loom.v1.TelemetryRequest
-	2,  // 13: loom.v1.Control.Health:output_type -> loom.v1.HealthResponse
-	4,  // 14: loom.v1.Control.Register:output_type -> loom.v1.RegisterResponse
-	6,  // 15: loom.v1.Control.Capabilities:output_type -> loom.v1.CapabilitiesResponse
-	9,  // 16: loom.v1.Control.Configure:output_type -> loom.v1.ConfigureResponse
-	11, // 17: loom.v1.Control.Arm:output_type -> loom.v1.ArmResponse
-	13, // 18: loom.v1.Control.Start:output_type -> loom.v1.StartResponse
-	15, // 19: loom.v1.Control.Stop:output_type -> loom.v1.StopResponse
-	17, // 20: loom.v1.Control.Destroy:output_type -> loom.v1.DestroyResponse
-	19, // 21: loom.v1.Control.TimeSync:output_type -> loom.v1.TimeSyncResponse
-	21, // 22: loom.v1.Control.StreamTelemetry:output_type -> loom.v1.TelemetrySample
-	13, // [13:23] is the sub-list for method output_type
-	3,  // [3:13] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	23, // 0: loom.v1.FlowSpec.duration:type_name -> google.protobuf.Duration
+	22, // 1: loom.v1.FlowSpec.params:type_name -> loom.v1.FlowSpec.ParamsEntry
+	0,  // 2: loom.v1.FlowSpec.role:type_name -> loom.v1.FlowRole
+	7,  // 3: loom.v1.ConfigureRequest.flow:type_name -> loom.v1.FlowSpec
+	1,  // 4: loom.v1.Control.Health:input_type -> loom.v1.HealthRequest
+	3,  // 5: loom.v1.Control.Register:input_type -> loom.v1.RegisterRequest
+	5,  // 6: loom.v1.Control.Capabilities:input_type -> loom.v1.CapabilitiesRequest
+	8,  // 7: loom.v1.Control.Configure:input_type -> loom.v1.ConfigureRequest
+	10, // 8: loom.v1.Control.Arm:input_type -> loom.v1.ArmRequest
+	12, // 9: loom.v1.Control.Start:input_type -> loom.v1.StartRequest
+	14, // 10: loom.v1.Control.Stop:input_type -> loom.v1.StopRequest
+	16, // 11: loom.v1.Control.Destroy:input_type -> loom.v1.DestroyRequest
+	18, // 12: loom.v1.Control.TimeSync:input_type -> loom.v1.TimeSyncRequest
+	20, // 13: loom.v1.Control.StreamTelemetry:input_type -> loom.v1.TelemetryRequest
+	2,  // 14: loom.v1.Control.Health:output_type -> loom.v1.HealthResponse
+	4,  // 15: loom.v1.Control.Register:output_type -> loom.v1.RegisterResponse
+	6,  // 16: loom.v1.Control.Capabilities:output_type -> loom.v1.CapabilitiesResponse
+	9,  // 17: loom.v1.Control.Configure:output_type -> loom.v1.ConfigureResponse
+	11, // 18: loom.v1.Control.Arm:output_type -> loom.v1.ArmResponse
+	13, // 19: loom.v1.Control.Start:output_type -> loom.v1.StartResponse
+	15, // 20: loom.v1.Control.Stop:output_type -> loom.v1.StopResponse
+	17, // 21: loom.v1.Control.Destroy:output_type -> loom.v1.DestroyResponse
+	19, // 22: loom.v1.Control.TimeSync:output_type -> loom.v1.TimeSyncResponse
+	21, // 23: loom.v1.Control.StreamTelemetry:output_type -> loom.v1.TelemetrySample
+	14, // [14:24] is the sub-list for method output_type
+	4,  // [4:14] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_proto_loom_v1_control_proto_init() }
@@ -1354,7 +1388,7 @@ func file_proto_loom_v1_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_loom_v1_control_proto_rawDesc), len(file_proto_loom_v1_control_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   21,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
