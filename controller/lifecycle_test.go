@@ -13,11 +13,10 @@ import (
 	"github.com/bgrewell/loom/core/scenario"
 )
 
-// TestWaitSourcesAndRateFreeze drives a count-bounded sender to completion and
-// checks two things the loomctl run loop depends on: WaitSources returns once the
-// source flow finishes, and the finished flow's live rate is zeroed (so it stops
-// inflating the aggregate) while its cumulative bytes are retained.
-func TestWaitSourcesAndRateFreeze(t *testing.T) {
+// TestWaitSourcesAndSnapshot drives a count-bounded sender to completion and
+// checks what the loomctl run loop depends on: WaitSources returns once the source
+// flow finishes, and Snapshot retains its cumulative bytes for the summary.
+func TestWaitSourcesAndSnapshot(t *testing.T) {
 	clientAddr, stopClient := startAgent(t)
 	defer stopClient()
 	serverAddr, stopServer := startAgent(t)
@@ -60,14 +59,11 @@ func TestWaitSourcesAndRateFreeze(t *testing.T) {
 		t.Fatal("WaitSources returned false; source flow never completed")
 	}
 
-	// Give the collector a tick to apply the zeroed rate after the stream ended.
+	// The final sample carries the cumulative total, retained by Snapshot.
 	time.Sleep(60 * time.Millisecond)
 	snap := tel.Snapshot()
 	if snap.TxBytes == 0 {
 		t.Fatalf("expected non-zero tx bytes after a completed flow, got %+v", snap)
-	}
-	if snap.TxBitsPerSec != 0 {
-		t.Errorf("finished sender should report 0 live tx rate, got %v", snap.TxBitsPerSec)
 	}
 	c.Teardown(context.Background())
 }
@@ -81,8 +77,8 @@ func TestAggregateSummary(t *testing.T) {
 			{Event: "blast", Role: Receiver, Bytes: 124_000_000},
 		},
 	}
-	out := a.Summary(time.Second, true)
-	if !strings.Contains(out, "--- summary ---") {
+	out := a.Summary(time.Second, true, false)
+	if !strings.Contains(out, "--- summary (authoritative) ---") {
 		t.Fatalf("missing summary header: %q", out)
 	}
 	if !strings.Contains(out, "125.00 MB") || !strings.Contains(out, "avg 1.00 Gbps") {
@@ -93,8 +89,12 @@ func TestAggregateSummary(t *testing.T) {
 		t.Errorf("summary missing per-flow rows: %q", out)
 	}
 	// Without perFlow, no per-row breakdown.
-	if strings.Contains(a.Summary(time.Second, false), "receiver") {
+	if strings.Contains(a.Summary(time.Second, false, false), "receiver") {
 		t.Error("non-per-flow summary should not list individual flows")
+	}
+	// The live-incomplete note appears only when flagged.
+	if !strings.Contains(a.Summary(time.Second, false, true), "reconciled") {
+		t.Error("expected reconciled note when liveIncomplete is set")
 	}
 }
 

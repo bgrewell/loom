@@ -28,18 +28,19 @@ func TestTelemetryAggregatesAcrossAgents(t *testing.T) {
 		},
 		Timeline: []scenario.Event{{
 			Name:  "blast",
-			Flow:  scenario.Flow{Kind: "udp", Params: map[string]any{"packet_size": 1000}},
+			Flow:  scenario.Flow{Kind: "udp", Params: map[string]any{"packet_size": 1000, "rate": "50Mbps"}},
 			From:  scenario.Selector{Raw: "client"},
 			To:    scenario.Selector{Raw: "server"},
 			Start: scenario.Start{Offset: 0},
-			Stop:  scenario.Stop{Count: 5000},
+			Stop:  scenario.Stop{After: 800 * time.Millisecond},
 		}},
 	}
 
-	c := New(s, map[string]string{"client": clientAddr, "server": serverAddr})
+	const interval = 150 * time.Millisecond
+	c := New(s, map[string]string{"client": clientAddr, "server": serverAddr}, WithInterval(interval))
 	defer c.Close()
 
-	tel := NewTelemetry(10 * time.Millisecond)
+	tel := NewTelemetry(interval)
 	defer tel.Close()
 	rxSeen := make(chan struct{}, 1)
 	tel.AddObserver(ObserverFunc(func(a Aggregate) {

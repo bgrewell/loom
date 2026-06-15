@@ -28,16 +28,19 @@ import (
 // (started/cancel/err), which gRPC dispatches concurrently from per-RPC
 // goroutines.
 type managedFlow struct {
-	id   string
-	run  flow.Runner
-	dp   io.Closer // the flow's datapath, held for cleanup
-	port uint32
-	done chan struct{} // closed when the run goroutine returns
+	id        string
+	run       flow.Runner
+	dp        io.Closer // the flow's datapath, held for cleanup
+	port      uint32
+	done      chan struct{} // closed when the run goroutine returns
+	scheduled chan struct{} // closed once start sets startAt/interval
 
-	mu      sync.Mutex
-	started bool
-	cancel  context.CancelFunc
-	err     error
+	mu       sync.Mutex
+	started  bool
+	cancel   context.CancelFunc
+	err      error
+	startAt  time.Time     // gate time T (set in start); zero = unscheduled
+	interval time.Duration // report interval I (set in start); 0 = legacy cadence
 }
 
 // flowManager tracks configured/running flows on an agent.
@@ -63,7 +66,10 @@ func (m *flowManager) configure(run flow.Runner, dp io.Closer, port uint32) (str
 	}
 	m.next++
 	id := fmt.Sprintf("flow-%d", m.next)
-	m.flows[id] = &managedFlow{id: id, run: run, dp: dp, port: port, done: make(chan struct{})}
+	m.flows[id] = &managedFlow{
+		id: id, run: run, dp: dp, port: port,
+		done: make(chan struct{}), scheduled: make(chan struct{}),
+	}
 	return id, nil
 }
 
@@ -77,9 +83,10 @@ func (m *flowManager) get(id string) (*managedFlow, bool) {
 // start begins a configured flow. If startAt is non-zero and in the future, the
 // run goroutine waits until then (on the agent's own clock) before generating —
 // the controller schedules a shared start time across agents so flows begin in
-// lockstep. A zero or past startAt runs immediately. The wait is interruptible by
-// Stop (ctx cancellation).
-func (m *flowManager) start(id string, startAt time.Time) error {
+// lockstep. A zero or past startAt runs immediately. interval is the reporting
+// interval the telemetry stream uses to anchor its boundary samples to startAt.
+// The wait is interruptible by Stop (ctx cancellation).
+func (m *flowManager) start(id string, startAt time.Time, interval time.Duration) error {
 	mf, ok := m.get(id)
 	if !ok {
 		return fmt.Errorf("flow %q not found", id)
@@ -92,6 +99,8 @@ func (m *flowManager) start(id string, startAt time.Time) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	mf.started = true
 	mf.cancel = cancel
+	mf.startAt, mf.interval = startAt, interval
+	close(mf.scheduled) // unblock any telemetry stream waiting for the schedule
 	go func() {
 		// Contain a flow panic to this flow: a generator/datapath panic must not
 		// take down the agent and every other flow with it.
@@ -335,7 +344,8 @@ func (s *Server) Start(_ context.Context, req *loomv1.StartRequest) (*loomv1.Sta
 	if ns := req.GetStartAtUnixNanos(); ns > 0 {
 		startAt = time.Unix(0, ns)
 	}
-	if err := s.mgr.start(req.GetFlowId(), startAt); err != nil {
+	interval := time.Duration(req.GetReportIntervalNanos())
+	if err := s.mgr.start(req.GetFlowId(), startAt, interval); err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
 	}
 	return &loomv1.StartResponse{}, nil
@@ -355,70 +365,100 @@ func (s *Server) Destroy(_ context.Context, req *loomv1.DestroyRequest) (*loomv1
 	return &loomv1.DestroyResponse{}, nil
 }
 
-// rateTracker computes per-interval throughput (bits/sec) from a monotonically
-// increasing byte counter. Seed it with the counter's value at the moment
-// measurement begins so the first interval measures only bytes seen after that
-// instant — not everything that accumulated before the stream was opened.
-type rateTracker struct {
-	lastBytes uint64
-	lastTime  time.Time
-}
-
-func newRateTracker(bytes uint64, now time.Time) *rateTracker {
-	return &rateTracker{lastBytes: bytes, lastTime: now}
-}
-
-// bitsPerSec returns the throughput since the previous call (or since seeding),
-// then advances the baseline. A counter that went backwards (shouldn't happen)
-// or a non-positive interval yields 0 rather than a bogus/negative rate.
-func (r *rateTracker) bitsPerSec(bytes uint64, now time.Time) float64 {
-	var bps float64
-	if d := now.Sub(r.lastTime).Seconds(); d > 0 && bytes >= r.lastBytes {
-		bps = float64(bytes-r.lastBytes) * 8 / d
-	}
-	r.lastBytes, r.lastTime = bytes, now
-	return bps
-}
-
-// StreamTelemetry streams interval samples for a flow until the flow finishes or
-// the client disconnects, emitting a final sample on completion.
+// StreamTelemetry streams a flow's telemetry until the flow finishes or the
+// client disconnects. When the flow was started with a report interval I, samples
+// are anchored to the gate: one per boundary at startAt + k*I, each carrying that
+// interval's delta (the controller is then a pure summer, with no second clock).
+// With no interval (legacy controllers, report_interval_nanos == 0) it falls back
+// to a free-running cadence.
 func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Control_StreamTelemetryServer) error {
 	mf, ok := s.mgr.get(req.GetFlowId())
 	if !ok {
 		return status.Errorf(codes.NotFound, "flow %q", req.GetFlowId())
 	}
+
+	// Wait until the flow has been Started (so the schedule is known), or the client
+	// goes away. We deliberately don't return on doneCh here: a flow can finish
+	// between Start and our first read, and the streaming loop below still owes a
+	// final cumulative sample for that case.
+	select {
+	case <-mf.scheduledCh():
+	case <-stream.Context().Done():
+		return nil
+	}
+	mf.mu.Lock()
+	startAt, interval := mf.startAt, mf.interval
+	mf.mu.Unlock()
+
+	if interval <= 0 {
+		return s.streamLegacy(req, mf, stream)
+	}
+	return streamBoundaries(req, mf, stream, startAt, interval)
+}
+
+// streamBoundaries emits one sample per interval boundary anchored to the gate.
+// The agent reads its counters at the boundary instant, so each interval's delta
+// is exact — no rate estimation, no first-sample inflation.
+func streamBoundaries(req *loomv1.TelemetryRequest, mf *managedFlow, stream loomv1.Control_StreamTelemetryServer, startAt time.Time, interval time.Duration) error {
+	c := mf.run.Counters()
+	anchor := startAt
+	if anchor.IsZero() {
+		anchor = time.Now() // unscheduled flow: anchor intervals to first run
+	}
+
+	var prevBytes, prevPkts uint64
+	prevTime := anchor
+	k := int64(0)
+	for {
+		boundary := anchor.Add(time.Duration(k+1) * interval)
+		timer := time.NewTimer(time.Until(boundary))
+		select {
+		case <-stream.Context().Done():
+			timer.Stop()
+			return nil
+		case <-mf.doneCh():
+			timer.Stop()
+			// Final sample: the trailing partial interval beyond the last boundary.
+			b, p := c.Bytes(), c.Packets()
+			now := time.Now()
+			return stream.Send(&loomv1.TelemetrySample{
+				FlowId: req.GetFlowId(), Nanos: now.UnixNano(), Bytes: b, Packets: p,
+				IntervalIndex: -1, IntervalBytes: b - prevBytes, IntervalPackets: p - prevPkts,
+				IntervalNanos: now.Sub(prevTime).Nanoseconds(), Final: true,
+			})
+		case <-timer.C:
+			b, p := c.Bytes(), c.Packets()
+			if err := stream.Send(&loomv1.TelemetrySample{
+				FlowId: req.GetFlowId(), Nanos: boundary.UnixNano(), Bytes: b, Packets: p,
+				IntervalIndex: k, IntervalBytes: b - prevBytes, IntervalPackets: p - prevPkts,
+				IntervalNanos: boundary.Sub(prevTime).Nanoseconds(),
+			}); err != nil {
+				return err
+			}
+			prevBytes, prevPkts, prevTime = b, p, boundary
+			k++
+		}
+	}
+}
+
+// streamLegacy is the pre-interval free-running path for older controllers that
+// don't send a report interval: it sends cumulative counters at a fixed cadence.
+func (s *Server) streamLegacy(req *loomv1.TelemetryRequest, mf *managedFlow, stream loomv1.Control_StreamTelemetryServer) error {
 	c := mf.run.Counters()
 	ticker := time.NewTicker(s.telemetryInterval())
 	defer ticker.Stop()
-
-	// Seed the meter with the counter's current value, not 0: a flow is usually
-	// already running by the time a telemetry stream is opened, so a 0 baseline
-	// would charge every byte sent before this stream began to the first interval,
-	// inflating the first sample's rate (~2x). Seeding here aligns the byte and
-	// time baselines so the first rate measures only this interval.
-	meter := newRateTracker(c.Bytes(), time.Now())
 	send := func(now time.Time) error {
 		b, p := c.Bytes(), c.Packets()
 		return stream.Send(&loomv1.TelemetrySample{
-			FlowId: req.GetFlowId(), Nanos: now.UnixNano(),
-			Bytes: b, Packets: p, BitsPerSec: meter.bitsPerSec(b, now),
+			FlowId: req.GetFlowId(), Nanos: now.UnixNano(), Bytes: b, Packets: p,
 		})
 	}
-
-	// Send an immediate sample so the collector gets a cumulative baseline at
-	// subscribe time (≈ flow start) rather than waiting a full interval — this is
-	// what lets an N-second run report ~N/interval lines instead of losing the
-	// first one or two.
-	if err := send(time.Now()); err != nil {
-		return err
-	}
-
 	for {
 		select {
 		case <-stream.Context().Done():
 			return nil
 		case <-mf.doneCh():
-			return send(time.Now()) // final sample
+			return send(time.Now())
 		case now := <-ticker.C:
 			if err := send(now); err != nil {
 				return err
@@ -432,10 +472,12 @@ func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Con
 // started it simply never fires.
 func (mf *managedFlow) doneCh() <-chan struct{} { return mf.done }
 
-// defaultTelemetryInterval is how often an agent samples a flow's counters. It is
-// deliberately faster than a typical controller display interval (e.g. 1s) so the
-// collector always has a fresh cumulative reading to compute each display
-// interval's rate from. Override with LOOMD_TELEMETRY.
+// scheduledCh returns the channel closed once the flow is Started and its
+// startAt/interval schedule is known.
+func (mf *managedFlow) scheduledCh() <-chan struct{} { return mf.scheduled }
+
+// defaultTelemetryInterval is the legacy free-running sample cadence used only
+// when a controller does not send a report interval. Override with LOOMD_TELEMETRY.
 const defaultTelemetryInterval = 250 * time.Millisecond
 
 func (s *Server) telemetryInterval() time.Duration {

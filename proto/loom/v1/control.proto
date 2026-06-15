@@ -130,6 +130,11 @@ message StartRequest {
   // agent's clock using the TimeSync offset, so flows on different hosts begin in
   // lockstep regardless of link latency). 0 (or a past time) starts immediately.
   int64 start_at_unix_nanos = 2;
+  // report_interval_nanos is the reporting interval I. The agent emits one
+  // telemetry sample per interval boundary at start_at + k*I (anchored to the
+  // gate, or to first run when start_at is 0), each carrying that interval's
+  // delta. 0 = legacy free-running cadence (back-compat with older controllers).
+  int64 report_interval_nanos = 3;
 }
 message StartResponse {}
 message StopRequest { string flow_id = 1; }
@@ -153,8 +158,16 @@ message TelemetryRequest {
 }
 message TelemetrySample {
   string flow_id = 1;
-  int64 nanos = 2;
-  uint64 bytes = 3;
-  uint64 packets = 4;
-  double bits_per_sec = 5;
+  int64 nanos = 2;           // agent timestamp of this reading (the boundary)
+  uint64 bytes = 3;          // cumulative bytes
+  uint64 packets = 4;        // cumulative packets
+  double bits_per_sec = 5;   // legacy; the controller computes rate from the delta
+  // Interval accounting, anchored to the scheduled-start gate. The agent reads
+  // its counters at each boundary start_at + k*I and reports the interval's delta,
+  // so the controller is a pure summer (no central rate clock).
+  int64 interval_index = 6;    // k: 0 for [T,T+I], 1 for [T+I,T+2I], …; -1 on the final sample
+  uint64 interval_bytes = 7;   // delta bytes during interval k
+  uint64 interval_packets = 8; // delta packets during interval k
+  int64 interval_nanos = 9;    // measured elapsed ns of interval k (rate = interval_bytes*8/interval_nanos)
+  bool final = 10;             // true on the completion sample (trailing partial interval)
 }

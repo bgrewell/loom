@@ -79,13 +79,14 @@ type Dialer func(addr string) (loomv1.ControlClient, io.Closer, error)
 
 // Controller drives a scenario across agents addressed by endpoint name.
 type Controller struct {
-	s      *scenario.Scenario
-	addrs  map[string]string // endpoint name -> agent control address
-	token  string            // shared control-plane token (ADR-0014)
-	dialer Dialer
-	rng    *rand.Rand
-	agents map[string]loomv1.ControlClient
-	closes []func()
+	s        *scenario.Scenario
+	addrs    map[string]string // endpoint name -> agent control address
+	token    string            // shared control-plane token (ADR-0014)
+	dialer   Dialer
+	rng      *rand.Rand
+	interval time.Duration // reporting interval the agents anchor their samples to
+	agents   map[string]loomv1.ControlClient
+	closes   []func()
 
 	mu     sync.Mutex
 	placed []Placed
@@ -107,6 +108,13 @@ func WithDialer(d Dialer) Option {
 	return func(c *Controller) { c.dialer = d }
 }
 
+// WithInterval sets the reporting interval the agents anchor their boundary
+// samples to (matches loomctl's --interval). Zero leaves agents on their legacy
+// free-running cadence.
+func WithInterval(d time.Duration) Option {
+	return func(c *Controller) { c.interval = d }
+}
+
 // New returns a Controller for s, with addrs mapping each endpoint name to its
 // agent's control address.
 func New(s *scenario.Scenario, addrs map[string]string, opts ...Option) *Controller {
@@ -119,6 +127,9 @@ func New(s *scenario.Scenario, addrs map[string]string, opts ...Option) *Control
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	if c.interval <= 0 {
+		c.interval = time.Second // agents anchor boundary samples to this
 	}
 	if c.dialer == nil {
 		c.dialer = func(addr string) (loomv1.ControlClient, io.Closer, error) {
@@ -227,8 +238,8 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		dp = "udp"
 	}
 
-	// Receiver on the destination agent. A UDP listener returns an ephemeral
-	// port; a NIC-bound datapath (afxdp) uses the endpoint's iface/queue.
+	// Configure the receiver first (its ephemeral port targets the sender). A UDP
+	// listener returns a data port; a NIC-bound datapath (afxdp) uses iface/queue.
 	rxCfg, err := toAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: &loomv1.FlowSpec{
 		Role: loomv1.FlowRole_FLOW_ROLE_RECEIVER, Datapath: dp,
 		PacketSize: int32ToU32(packetSize(ev)), Iface: to.Iface, Queue: int32ToU32(to.Queue),
@@ -236,10 +247,6 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 	if err != nil {
 		return fmt.Errorf("event %q: configure receiver: %w", ev.Name, err)
 	}
-	if _, err := toAgent.Start(ctx, &loomv1.StartRequest{FlowId: rxCfg.GetFlowId()}); err != nil {
-		return fmt.Errorf("event %q: start receiver: %w", ev.Name, err)
-	}
-	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name)
 
 	// Sender on the source agent. Socket datapaths target the receiver's data
 	// address; NIC-bound datapaths (afxdp, raw L2) ignore it and use the iface.
@@ -251,18 +258,21 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		}
 		target = net.JoinHostPort(dataHost, strconv.Itoa(int(rxCfg.GetDataPort())))
 	}
-
-	gate := c.startGate()
 	txCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: senderSpec(ev, dp, target, from, c.s.Seed)})
 	if err != nil {
 		return fmt.Errorf("event %q: configure sender: %w", ev.Name, err)
 	}
-	// Open the sender at the shared gate (the receiver is already draining), so
-	// the traffic begins at a precise, known instant — and, across hosts, in
-	// lockstep with other sources.
-	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{
-		FlowId: txCfg.GetFlowId(), StartAtUnixNanos: c.startAtFor(from.Name, gate),
-	}); err != nil {
+
+	// Both ends open at the same gate, so their interval boundaries (and thus the
+	// controller's per-interval consolidation) line up. The receiver's socket is
+	// bound at Configure; gating its drain to T is safe because no traffic flows
+	// before the sender's gate anyway.
+	gate := c.startGate()
+	if _, err := toAgent.Start(ctx, c.startReq(rxCfg.GetFlowId(), to.Name, gate)); err != nil {
+		return fmt.Errorf("event %q: start receiver: %w", ev.Name, err)
+	}
+	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name)
+	if _, err := fromAgent.Start(ctx, c.startReq(txCfg.GetFlowId(), from.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start sender: %w", ev.Name, err)
 	}
 	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name)
@@ -281,7 +291,10 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 		}
 	}
 
-	// Responder on the destination agent; it returns its ephemeral data port.
+	// Responder on the destination agent; it returns its ephemeral data port. It
+	// must be accepting before the requester dials (at Configure), so it starts
+	// immediately (no gate) — its telemetry still anchors to first traffic, which
+	// only arrives once the requester begins at the gate.
 	respCfg, err := toAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: &loomv1.FlowSpec{
 		Role: loomv1.FlowRole_FLOW_ROLE_RESPONDER, Transport: transport,
 		PacketSize: int32ToU32(packetSize(ev)),
@@ -289,7 +302,7 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 	if err != nil {
 		return fmt.Errorf("event %q: configure responder: %w", ev.Name, err)
 	}
-	if _, err := toAgent.Start(ctx, &loomv1.StartRequest{FlowId: respCfg.GetFlowId()}); err != nil {
+	if _, err := toAgent.Start(ctx, c.startReq(respCfg.GetFlowId(), to.Name, time.Time{})); err != nil {
 		return fmt.Errorf("event %q: start responder: %w", ev.Name, err)
 	}
 	c.track(toAgent, toAddr, respCfg.GetFlowId(), Responder, ev.Name)
@@ -305,13 +318,22 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 	if err != nil {
 		return fmt.Errorf("event %q: configure requester: %w", ev.Name, err)
 	}
-	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{
-		FlowId: reqCfg.GetFlowId(), StartAtUnixNanos: c.startAtFor(from.Name, gate),
-	}); err != nil {
+	if _, err := fromAgent.Start(ctx, c.startReq(reqCfg.GetFlowId(), from.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start requester: %w", ev.Name, err)
 	}
 	c.track(fromAgent, fromAddr, reqCfg.GetFlowId(), Requester, ev.Name)
 	return nil
+}
+
+// startReq builds a Start request that opens flowID at the shared gate (translated
+// into endpoint's clock) and tells the agent the reporting interval to anchor its
+// boundary samples to. A zero gate means "start immediately" (responders).
+func (c *Controller) startReq(flowID, endpoint string, gate time.Time) *loomv1.StartRequest {
+	return &loomv1.StartRequest{
+		FlowId:              flowID,
+		StartAtUnixNanos:    c.startAtFor(endpoint, gate),
+		ReportIntervalNanos: c.interval.Nanoseconds(),
+	}
 }
 
 func (c *Controller) agentFor(endpoint string) (loomv1.ControlClient, string, error) {

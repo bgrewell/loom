@@ -89,7 +89,8 @@ func runScenario(ctx *stencil.Context) error {
 		token = os.Getenv("LOOM_TOKEN")
 	}
 
-	c := controller.New(sc, addrs, controller.WithToken(token))
+	interval := ctx.Flags.Duration("interval")
+	c := controller.New(sc, addrs, controller.WithToken(token), controller.WithInterval(interval))
 	defer c.Close()
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -117,7 +118,7 @@ func runScenario(ctx *stencil.Context) error {
 	// is just another observer later).
 	perFlow := ctx.Flags.Bool("per-flow")
 	jsonOut := ctx.Flags.String("output") == "json"
-	tel := controller.NewTelemetry(ctx.Flags.Duration("interval"), controller.WithTelemetryToken(token))
+	tel := controller.NewTelemetry(interval, controller.WithTelemetryToken(token))
 	defer tel.Close()
 	if ctx.Flags.Bool("live") {
 		if jsonOut {
@@ -137,33 +138,48 @@ func runScenario(ctx *stencil.Context) error {
 
 	// Stop as soon as the traffic sources finish instead of idling to the horizon.
 	// An end-of-test (unbounded) scenario has no completing sources, so this waits
-	// for the horizon or Ctrl-C instead.
+	// for the horizon or Ctrl-C instead. The line count is already exactly
+	// duration/interval (the agents own the interval clock), so there's nothing to
+	// freeze — a short drain only improves trailing-byte accuracy in the totals.
 	waited := tel.WaitSources(runCtx, c)
-	// Freeze the live display now so the printed line count equals the run's
-	// duration/interval — the drain and teardown below would otherwise add a
-	// stray line. The collector keeps ingesting for an accurate final snapshot.
-	tel.Freeze()
 	if waited {
-		time.Sleep(300 * time.Millisecond) // let the receiver drain trailing packets
+		time.Sleep(250 * time.Millisecond) // let the receiver drain trailing packets
 	}
-	c.Teardown(context.Background())   // stop receivers; flush their final samples
-	time.Sleep(200 * time.Millisecond) // let the collector ingest those final samples
-	elapsed := time.Since(runStart)
+	c.Teardown(context.Background())   // stop flows; flush their final cumulative samples
+	time.Sleep(150 * time.Millisecond) // let the collector ingest those final samples
 	summary := tel.Snapshot()
 	cancel() // stop the collector
 	<-collectDone
 
+	// Average over the test's intended duration (not wall-clock including startup)
+	// so the summary is consistent with the per-interval lines.
+	dur := testDuration(sc, time.Since(runStart))
 	if jsonOut {
-		printJSONSummary(os.Stdout, summary, elapsed)
+		printJSONSummary(os.Stdout, summary, dur, tel.LiveIncomplete())
 	} else {
-		fmt.Fprint(os.Stdout, summary.Summary(elapsed, perFlow))
+		fmt.Fprint(os.Stdout, summary.Summary(dur, perFlow, tel.LiveIncomplete()))
 	}
 	return nil
 }
 
+// testDuration is the scenario's intended traffic duration (the longest event
+// stop.after), or fallback when no event is duration-bounded.
+func testDuration(sc *scenario.Scenario, fallback time.Duration) time.Duration {
+	var d time.Duration
+	for _, ev := range sc.Timeline {
+		if ev.Stop.After > d {
+			d = ev.Stop.After
+		}
+	}
+	if d <= 0 {
+		return fallback
+	}
+	return d
+}
+
 // printJSONSummary writes a final machine-readable summary object.
-func printJSONSummary(w *os.File, a controller.Aggregate, elapsed time.Duration) {
-	secs := elapsed.Seconds()
+func printJSONSummary(w *os.File, a controller.Aggregate, dur time.Duration, liveIncomplete bool) {
+	secs := dur.Seconds()
 	avg := func(bytes uint64) float64 {
 		if secs <= 0 {
 			return 0
@@ -172,12 +188,14 @@ func printJSONSummary(w *os.File, a controller.Aggregate, elapsed time.Duration)
 	}
 	enc := json.NewEncoder(w)
 	_ = enc.Encode(map[string]any{
-		"summary":         true,
-		"elapsed_seconds": secs,
-		"tx_bytes":        a.TxBytes,
-		"rx_bytes":        a.RxBytes,
-		"tx_avg_bps":      avg(a.TxBytes),
-		"rx_avg_bps":      avg(a.RxBytes),
-		"flows":           len(a.Flows),
+		"summary":          true,
+		"authoritative":    true,
+		"duration_seconds": secs,
+		"tx_bytes":         a.TxBytes,
+		"rx_bytes":         a.RxBytes,
+		"tx_avg_bps":       avg(a.TxBytes),
+		"rx_avg_bps":       avg(a.RxBytes),
+		"flows":            len(a.Flows),
+		"live_incomplete":  liveIncomplete,
 	})
 }
