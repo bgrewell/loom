@@ -1,5 +1,7 @@
 github.com/BGrewell/go-conversions v0.0.0-20211209224842-146e47cfb964 h1:oTRrG2R01peLK4R2lA+pMr0hr8sluLNo1S+k2K2JIY0=
 github.com/BGrewell/go-conversions v0.0.0-20211209224842-146e47cfb964/go.mod h1:XtXcz/MP04vhr6c6R/5gZPJZVQpbXlFsKTHr5yy/5sU=
+github.com/BGrewell/go-conversions v0.0.0-20260615151034-4f93f00cd275 h1:N+Iw0PQBbtTu2qbrOU0bBqL39T6xxaPGP6dFW5mHHas=
+github.com/BGrewell/go-conversions v0.0.0-20260615151034-4f93f00cd275/go.mod h1:XtXcz/MP04vhr6c6R/5gZPJZVQpbXlFsKTHr5yy/5sU=
 github.com/asavie/xdp v0.3.3 h1:b5Aa3EkMJYBeUO5TxPTIAa4wyUqYcsQr2s8f6YLJXhE=
 github.com/asavie/xdp v0.3.3/go.mod h1:Vv5p+3mZiDh7ImdSvdon3E78wXyre7df5V58ATdIYAY=
 github.com/bgrewell/stencil v0.0.0-20260610184505-9b3d050c070e h1:SBotc7M53as7540RE7cVNN+en99VcCaCHcu0MK4KzBk=

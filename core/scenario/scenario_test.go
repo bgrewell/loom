@@ -96,7 +96,7 @@ func TestParseScenario(t *testing.T) {
 	}
 
 	backup := byName["backup"]
-	if backup.Datapath != "afxdp" || backup.Stop.Volume != 123*1024*1024 {
+	if backup.Datapath != "afxdp" || backup.Stop.Volume != 123_000_000 {
 		t.Fatalf("backup = datapath %q volume %d", backup.Datapath, backup.Stop.Volume)
 	}
 

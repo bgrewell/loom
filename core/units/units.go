@@ -2,25 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package units parses the scenario value grammar — rates, sizes, durations, and
-// "lo..hi" ranges of each (docs/scenario-schema.md). Rates reuse
-// github.com/BGrewell/go-conversions; sizes and ranges are parsed here.
+// "lo..hi" ranges of each (docs/scenario-schema.md). Rates and sizes reuse
+// github.com/BGrewell/go-conversions, which distinguishes SI decimal prefixes
+// (K/M/G) from IEC binary prefixes (Ki/Mi/Gi); durations and ranges are parsed
+// here.
 package units
 
 import (
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
 	"time"
 
 	conv "github.com/BGrewell/go-conversions"
 )
 
-// ParseRate parses a bit-rate (e.g. "100Mbps", "1.5G", "1000") to bits/sec using
-// decimal multipliers (K=1e3, M=1e6, G=1e9). A value that overflows int64 wraps
-// negative in the underlying parser, so a negative result is rejected as
-// out-of-range rather than returned as a poisoned (negative) rate.
+// ParseRate parses a bit-rate (e.g. "100Mbps", "1.5G", "1000") to bits/sec.
+// SI decimal prefixes (K=1e3, M=1e6, G=1e9, e.g. "100Mbps") are distinct from IEC
+// binary prefixes (Ki=2^10, Mi=2^20, Gi=2^30, e.g. "100Mibps"). A value that
+// overflows int64 is rejected as out-of-range rather than returned as a poisoned
+// (negative) rate.
 func ParseRate(s string) (int64, error) {
 	v, err := conv.StringBitRateToInt(strings.TrimSpace(s))
 	if err != nil {
@@ -32,36 +33,21 @@ func ParseRate(s string) (int64, error) {
 	return v, nil
 }
 
-// ParseSize parses a byte size (e.g. "1000", "100K", "1.5MB") to bytes using
-// binary multipliers (K=1024, M=1024², G=1024³); a trailing "B" is allowed.
+// ParseSize parses a byte size (e.g. "1000", "100K", "1.5MB") to bytes.
+// SI decimal prefixes (K=1e3, M=1e6, G=1e9, e.g. "100MB") are distinct from IEC
+// binary prefixes (Ki=2^10, Mi=2^20, Gi=2^30, e.g. "100MiB"); a trailing "B" is
+// allowed. The underlying parser overflow-guards and returns a non-negative
+// int64, which fits in the uint64 result.
 func ParseSize(s string) (uint64, error) {
-	str := strings.ToLower(strings.TrimSpace(s))
-	if str == "" {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
 		return 0, errors.New("empty size")
 	}
-	str = strings.TrimSuffix(str, "b")
-	mult := 1.0
-	if n := len(str); n > 0 {
-		switch str[n-1] {
-		case 'k':
-			mult, str = 1024, str[:n-1]
-		case 'm':
-			mult, str = 1024*1024, str[:n-1]
-		case 'g':
-			mult, str = 1024*1024*1024, str[:n-1]
-		}
-	}
-	f, err := strconv.ParseFloat(strings.TrimSpace(str), 64)
-	if err != nil || f < 0 {
+	v, err := conv.StringByteSizeToInt(trimmed)
+	if err != nil || v < 0 {
 		return 0, fmt.Errorf("invalid size %q", s)
 	}
-	// Guard the float->uint64 conversion: out-of-range floats convert to
-	// implementation-defined garbage, silently corrupting the byte count.
-	prod := f * mult
-	if math.IsNaN(prod) || math.IsInf(prod, 0) || prod < 0 || prod >= math.MaxUint64 {
-		return 0, fmt.Errorf("size out of range %q", s)
-	}
-	return uint64(prod), nil
+	return uint64(v), nil
 }
 
 // ParseDuration parses a Go duration string (e.g. "100ms", "1m30s").
