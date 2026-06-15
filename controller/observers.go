@@ -25,16 +25,19 @@ func NewTextObserver(w io.Writer) *TextObserver { return &TextObserver{w: w} }
 // spot a single flow lagging (e.g. when flows take different network paths).
 func (o *TextObserver) WithPerFlow(on bool) *TextObserver { o.perFlow = on; return o }
 
-// Observe implements Observer.
+// Observe implements Observer. Each line is one consolidated interval. When the
+// interval was flushed before every flow reported (a node we're not hearing from
+// in near-real-time), it's marked — the final summary remains authoritative.
 func (o *TextObserver) Observe(a Aggregate) {
-	// Suppress empty ticks (before any flow is placed/streaming) so the first
-	// printed line is the first real traffic, the way iperf stays quiet until the
-	// test connects.
 	if len(a.Flows) == 0 {
 		return
 	}
-	fmt.Fprintf(o.w, "[%s] tx %-11s rx %-11s (%d flows)\n",
-		a.At.Format("15:04:05"), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), len(a.Flows))
+	marker := ""
+	if !a.Complete && a.Expected > 0 {
+		marker = fmt.Sprintf("  (!) %d/%d nodes reporting", a.Sources, a.Expected)
+	}
+	fmt.Fprintf(o.w, "[%s] tx %-11s rx %-11s (%d flows)%s\n",
+		a.At.Format("15:04:05"), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), len(a.Flows), marker)
 	if o.perFlow {
 		for _, f := range sortedFlows(a.Flows) {
 			fmt.Fprintf(o.w, "           %-12s %-9s %-11s %s\n",
@@ -53,11 +56,15 @@ func NewJSONObserver(w io.Writer) *JSONObserver { return &JSONObserver{enc: json
 func (o *JSONObserver) Observe(a Aggregate) {
 	_ = o.enc.Encode(map[string]any{
 		"at":              a.At.Format(time.RFC3339Nano),
+		"index":           a.Index,
 		"tx_bits_per_sec": a.TxBitsPerSec,
 		"rx_bits_per_sec": a.RxBitsPerSec,
 		"tx_bytes":        a.TxBytes,
 		"rx_bytes":        a.RxBytes,
 		"flows":           len(a.Flows),
+		"sources":         a.Sources,
+		"expected":        a.Expected,
+		"complete":        a.Complete,
 	})
 }
 
@@ -103,10 +110,14 @@ func sortedFlows(flows []FlowSample) []FlowSample {
 	return out
 }
 
-// Summary renders an end-of-run report: tx/rx totals with the average throughput
-// over elapsed, and (when perFlow) a line per flow. avg is bytes×8/elapsed.
-func (a Aggregate) Summary(elapsed time.Duration, perFlow bool) string {
-	secs := elapsed.Seconds()
+// Summary renders the authoritative end-of-run report: tx/rx cumulative totals and
+// the average throughput over the test duration, and (when perFlow) a line per
+// flow. Averaging over the test duration (not wall-clock including startup) keeps
+// it consistent with the per-interval lines. liveIncomplete notes when the live
+// view was momentarily missing a node, so the reader knows this report — not the
+// live stream — is the source of truth.
+func (a Aggregate) Summary(duration time.Duration, perFlow, liveIncomplete bool) string {
+	secs := duration.Seconds()
 	avg := func(bytes uint64) string {
 		if secs <= 0 {
 			return "n/a"
@@ -114,7 +125,7 @@ func (a Aggregate) Summary(elapsed time.Duration, perFlow bool) string {
 		return humanBits(float64(bytes) * 8 / secs)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "--- summary --- elapsed %s\n", elapsed.Round(time.Millisecond))
+	fmt.Fprintf(&b, "--- summary (authoritative) --- %s\n", duration.Round(time.Millisecond))
 	fmt.Fprintf(&b, "  tx %-10s avg %s\n", humanBytes(a.TxBytes), avg(a.TxBytes))
 	fmt.Fprintf(&b, "  rx %-10s avg %s\n", humanBytes(a.RxBytes), avg(a.RxBytes))
 	if perFlow {
@@ -122,6 +133,9 @@ func (a Aggregate) Summary(elapsed time.Duration, perFlow bool) string {
 			fmt.Fprintf(&b, "  %-12s %-9s %-10s avg %s\n",
 				f.Event, f.Role, humanBytes(f.Bytes), avg(f.Bytes))
 		}
+	}
+	if liveIncomplete {
+		fmt.Fprintf(&b, "  note: some live intervals were missing a node; totals above are reconciled.\n")
 	}
 	return b.String()
 }

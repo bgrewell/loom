@@ -766,8 +766,13 @@ type StartRequest struct {
 	// agent's clock using the TimeSync offset, so flows on different hosts begin in
 	// lockstep regardless of link latency). 0 (or a past time) starts immediately.
 	StartAtUnixNanos int64 `protobuf:"varint,2,opt,name=start_at_unix_nanos,json=startAtUnixNanos,proto3" json:"start_at_unix_nanos,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// report_interval_nanos is the reporting interval I. The agent emits one
+	// telemetry sample per interval boundary at start_at + k*I (anchored to the
+	// gate, or to first run when start_at is 0), each carrying that interval's
+	// delta. 0 = legacy free-running cadence (back-compat with older controllers).
+	ReportIntervalNanos int64 `protobuf:"varint,3,opt,name=report_interval_nanos,json=reportIntervalNanos,proto3" json:"report_interval_nanos,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *StartRequest) Reset() {
@@ -810,6 +815,13 @@ func (x *StartRequest) GetFlowId() string {
 func (x *StartRequest) GetStartAtUnixNanos() int64 {
 	if x != nil {
 		return x.StartAtUnixNanos
+	}
+	return 0
+}
+
+func (x *StartRequest) GetReportIntervalNanos() int64 {
+	if x != nil {
+		return x.ReportIntervalNanos
 	}
 	return 0
 }
@@ -1161,14 +1173,22 @@ func (x *TelemetryRequest) GetFlowId() string {
 }
 
 type TelemetrySample struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FlowId        string                 `protobuf:"bytes,1,opt,name=flow_id,json=flowId,proto3" json:"flow_id,omitempty"`
-	Nanos         int64                  `protobuf:"varint,2,opt,name=nanos,proto3" json:"nanos,omitempty"`
-	Bytes         uint64                 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
-	Packets       uint64                 `protobuf:"varint,4,opt,name=packets,proto3" json:"packets,omitempty"`
-	BitsPerSec    float64                `protobuf:"fixed64,5,opt,name=bits_per_sec,json=bitsPerSec,proto3" json:"bits_per_sec,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	FlowId     string                 `protobuf:"bytes,1,opt,name=flow_id,json=flowId,proto3" json:"flow_id,omitempty"`
+	Nanos      int64                  `protobuf:"varint,2,opt,name=nanos,proto3" json:"nanos,omitempty"`                                // agent timestamp of this reading (the boundary)
+	Bytes      uint64                 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`                                // cumulative bytes
+	Packets    uint64                 `protobuf:"varint,4,opt,name=packets,proto3" json:"packets,omitempty"`                            // cumulative packets
+	BitsPerSec float64                `protobuf:"fixed64,5,opt,name=bits_per_sec,json=bitsPerSec,proto3" json:"bits_per_sec,omitempty"` // legacy; the controller computes rate from the delta
+	// Interval accounting, anchored to the scheduled-start gate. The agent reads
+	// its counters at each boundary start_at + k*I and reports the interval's delta,
+	// so the controller is a pure summer (no central rate clock).
+	IntervalIndex   int64  `protobuf:"varint,6,opt,name=interval_index,json=intervalIndex,proto3" json:"interval_index,omitempty"`       // k: 0 for [T,T+I], 1 for [T+I,T+2I], …; -1 on the final sample
+	IntervalBytes   uint64 `protobuf:"varint,7,opt,name=interval_bytes,json=intervalBytes,proto3" json:"interval_bytes,omitempty"`       // delta bytes during interval k
+	IntervalPackets uint64 `protobuf:"varint,8,opt,name=interval_packets,json=intervalPackets,proto3" json:"interval_packets,omitempty"` // delta packets during interval k
+	IntervalNanos   int64  `protobuf:"varint,9,opt,name=interval_nanos,json=intervalNanos,proto3" json:"interval_nanos,omitempty"`       // measured elapsed ns of interval k (rate = interval_bytes*8/interval_nanos)
+	Final           bool   `protobuf:"varint,10,opt,name=final,proto3" json:"final,omitempty"`                                           // true on the completion sample (trailing partial interval)
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *TelemetrySample) Reset() {
@@ -1236,6 +1256,41 @@ func (x *TelemetrySample) GetBitsPerSec() float64 {
 	return 0
 }
 
+func (x *TelemetrySample) GetIntervalIndex() int64 {
+	if x != nil {
+		return x.IntervalIndex
+	}
+	return 0
+}
+
+func (x *TelemetrySample) GetIntervalBytes() uint64 {
+	if x != nil {
+		return x.IntervalBytes
+	}
+	return 0
+}
+
+func (x *TelemetrySample) GetIntervalPackets() uint64 {
+	if x != nil {
+		return x.IntervalPackets
+	}
+	return 0
+}
+
+func (x *TelemetrySample) GetIntervalNanos() int64 {
+	if x != nil {
+		return x.IntervalNanos
+	}
+	return 0
+}
+
+func (x *TelemetrySample) GetFinal() bool {
+	if x != nil {
+		return x.Final
+	}
+	return false
+}
+
 var File_proto_loom_v1_control_proto protoreflect.FileDescriptor
 
 const file_proto_loom_v1_control_proto_rawDesc = "" +
@@ -1296,10 +1351,11 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"ArmRequest\x12\x17\n" +
 	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\r\n" +
-	"\vArmResponse\"V\n" +
+	"\vArmResponse\"\x8a\x01\n" +
 	"\fStartRequest\x12\x17\n" +
 	"\aflow_id\x18\x01 \x01(\tR\x06flowId\x12-\n" +
-	"\x13start_at_unix_nanos\x18\x02 \x01(\x03R\x10startAtUnixNanos\"\x0f\n" +
+	"\x13start_at_unix_nanos\x18\x02 \x01(\x03R\x10startAtUnixNanos\x122\n" +
+	"\x15report_interval_nanos\x18\x03 \x01(\x03R\x13reportIntervalNanos\"\x0f\n" +
 	"\rStartResponse\"&\n" +
 	"\vStopRequest\x12\x17\n" +
 	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\x0e\n" +
@@ -1314,14 +1370,20 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x02t2\x18\x02 \x01(\x03R\x02t2\x12\x0e\n" +
 	"\x02t3\x18\x03 \x01(\x03R\x02t3\"+\n" +
 	"\x10TelemetryRequest\x12\x17\n" +
-	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\x92\x01\n" +
+	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\xc8\x02\n" +
 	"\x0fTelemetrySample\x12\x17\n" +
 	"\aflow_id\x18\x01 \x01(\tR\x06flowId\x12\x14\n" +
 	"\x05nanos\x18\x02 \x01(\x03R\x05nanos\x12\x14\n" +
 	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\x12\x18\n" +
 	"\apackets\x18\x04 \x01(\x04R\apackets\x12 \n" +
 	"\fbits_per_sec\x18\x05 \x01(\x01R\n" +
-	"bitsPerSec*\x9e\x01\n" +
+	"bitsPerSec\x12%\n" +
+	"\x0einterval_index\x18\x06 \x01(\x03R\rintervalIndex\x12%\n" +
+	"\x0einterval_bytes\x18\a \x01(\x04R\rintervalBytes\x12)\n" +
+	"\x10interval_packets\x18\b \x01(\x04R\x0fintervalPackets\x12%\n" +
+	"\x0einterval_nanos\x18\t \x01(\x03R\rintervalNanos\x12\x14\n" +
+	"\x05final\x18\n" +
+	" \x01(\bR\x05final*\x9e\x01\n" +
 	"\bFlowRole\x12\x19\n" +
 	"\x15FLOW_ROLE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10FLOW_ROLE_SENDER\x10\x01\x12\x16\n" +
