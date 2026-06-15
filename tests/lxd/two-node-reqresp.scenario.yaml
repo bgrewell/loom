@@ -1,0 +1,27 @@
+# Two-node request/response scenario for the LXD integration suite: an
+# https-browse flow from the client endpoint to the server endpoint. Unlike the
+# push UDP scenario, this exercises the responder role — loomctl places a
+# responder on `server` (it binds an ephemeral TCP port and serves each requested
+# object) and a requester on `client` (it drives the behavior script and receives
+# the download). The download bytes flow server -> client over a real TCP
+# connection across the bridge, so this validates cross-host responder reach.
+scenario: lxd-two-node-reqresp
+description: one https-browse request/response flow, client -> server
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: browse
+    flow:
+      kind: https-browse
+      object_size: 64KB
+      objects: 10
+      think: 0
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 4s

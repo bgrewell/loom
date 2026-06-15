@@ -14,10 +14,18 @@ An emulation compiles to a **behavior script** — a sequence of steps, each
 script over the flow's datapath until the stop condition, accounting every byte.
 Because the gaps and sizes are seeded, a run reproduces exactly.
 
-An emulation is the **sender's** behavior; an ordinary receiver absorbs and
-measures it. (Emulations that depend on the *server's* response size — a real
-HTTPS server, an FTP data channel — build on this same engine once the responder
-role lands; today emulations model the client-side shape.)
+Emulations run in one of two **modes**:
+
+- **Push** (`voip-call`, `prometheus-sender`, `ssh-session`): one-directional. The
+  emulation is the *sender's* behavior and an ordinary receiver absorbs and
+  measures it — the bytes flow client→server over the datapath.
+- **Request/response** (`https-browse`): bidirectional. The client *requests* each
+  object and the **server responds** with that many bytes, so the dominant
+  (download) traffic flows server→client over a real connection. The controller
+  places a **responder** on the `to` endpoint and a **requester** on the `from`
+  endpoint automatically — you still just set `flow.kind`. The transport defaults
+  per emulation (`https-browse` → TCP) and can be overridden with a `transport`
+  param (`tcp`|`udp`).
 
 ## Using one
 
@@ -52,7 +60,7 @@ Any agent can run any emulation — they're built in.
 | `kind` | Shape | Key params (defaults) |
 |---|---|---|
 | `voip-call` | constant-bit-rate media | `codec` (`g711` 64 kbps · `g729` 8 kbps · `opus` ~32 kbps), `ptime` (`20ms`; alias `interval`), `frame_size` (override; default = bitrate × ptime, e.g. g711@20 ms = 160 B), `duration` |
-| `https-browse` | a keep-alive session of object fetches with reading pauses | `objects` (`10`), `object_size` (`8KB..512KB`), `think` (`200ms..2s`), `duration` |
+| `https-browse` | a keep-alive session of object fetches with reading pauses (**request/response**: a real server responds with each object) | `objects` (`10`), `object_size` (`8KB..512KB`), `think` (`200ms..2s`), `transport` (`tcp`), `duration` |
 | `prometheus-sender` | periodic remote-write batches | `scrape` (`15s`), `batch_size` (`64KB`), `duration` |
 | `ssh-session` | interactive keystrokes, optional bulk (scp) | `keys` (`100`), `key_size` (`1..64`), `interkey` (`80ms..300ms`), `bulk` (`0`=none), `duration` |
 
@@ -88,9 +96,10 @@ scalar (`160`, `64KB`, `20ms`) is a fixed value; a `lo..hi` range
 
 ## Notes
 
-- Emulations run over whatever datapath the event selects (`udp` by default);
-  measurement (throughput now; jitter/loss for CBR as the stats path lands) comes
-  from the same accounting/telemetry as raw flows.
+- Push emulations run over whatever datapath the event selects (`udp` by
+  default); request/response emulations use a `transport` (TCP/UDP) connection
+  instead. Either way, measurement (throughput now; jitter/loss for CBR as the
+  stats path lands) comes from the same accounting/telemetry as raw flows.
 - A raw `kind` (`udp`, `tcp`, `stream`) is *not* an emulation — it runs the plain
   generator path.
 - Adding a new emulation is a small script compiler plus a registry entry — see

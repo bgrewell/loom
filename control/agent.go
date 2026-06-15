@@ -173,6 +173,19 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 		return &loomv1.ConfigureResponse{FlowId: id, DataPort: port}, nil
 	}
 
+	// Responder: the server side of a request/response emulation. Binds an
+	// ephemeral TCP/UDP port (returned as data_port) and serves the bytes a
+	// requester asks for.
+	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_RESPONDER {
+		return s.configureResponder(p)
+	}
+
+	// Requester: the client side of a request/response emulation. Compiles the
+	// named emulation to a behavior script and drives it against the responder.
+	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_REQUESTER {
+		return s.configureRequester(p)
+	}
+
 	// Emulation sender: a behavior-script runner over the chosen datapath.
 	if p.GetEmulation() != "" {
 		return s.configureEmulation(p)
@@ -228,6 +241,64 @@ func (s *Server) configureEmulation(p *loomv1.FlowSpec) (*loomv1.ConfigureRespon
 	id, err := s.mgr.configure(runner, dp, 0)
 	if err != nil {
 		_ = dp.Close()
+		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+	}
+	return &loomv1.ConfigureResponse{FlowId: id}, nil
+}
+
+// configureResponder binds a request/response responder on an ephemeral port and
+// reports it as data_port so the controller can target it from the requester.
+func (s *Server) configureResponder(p *loomv1.FlowSpec) (*loomv1.ConfigureResponse, error) {
+	if err := validatePacketSize(p.GetPacketSize()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := validateTransport(p.GetTransport()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	resp, err := emul.ListenResponder(p.GetTransport(), int(p.GetPacketSize()))
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "build responder: %v", err)
+	}
+	port := uint32(resp.Port())
+	id, err := s.mgr.configure(resp, resp, port)
+	if err != nil {
+		_ = resp.Close() // release the bound port we just took
+		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+	}
+	return &loomv1.ConfigureResponse{FlowId: id, DataPort: port}, nil
+}
+
+// configureRequester compiles the named emulation to a behavior script and dials
+// the responder at target, preparing a request/response runner. The connection
+// is opened at configure time, so the responder must already be listening.
+func (s *Server) configureRequester(p *loomv1.FlowSpec) (*loomv1.ConfigureResponse, error) {
+	if err := validatePacketSize(p.GetPacketSize()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := validateTransport(p.GetTransport()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := validateTarget(p.GetTarget()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if p.GetEmulation() == "" {
+		return nil, status.Error(codes.InvalidArgument, "requester requires an emulation")
+	}
+	script, err := emul.Build(p.GetEmulation(), emul.Params(p.GetParams()))
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "emulation: %v", err)
+	}
+	var dur time.Duration
+	if d := p.GetDuration(); d != nil {
+		dur = d.AsDuration()
+	}
+	req, err := emul.DialRequester(p.GetTransport(), p.GetTarget(), script, int(p.GetPacketSize()), dur, p.GetCount(), p.GetVolume(), p.GetSeed())
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "dial responder: %v", err)
+	}
+	id, err := s.mgr.configure(req, req, 0)
+	if err != nil {
+		_ = req.Close() // release the connection we just dialed
 		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
 	}
 	return &loomv1.ConfigureResponse{FlowId: id}, nil

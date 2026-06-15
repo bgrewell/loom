@@ -31,10 +31,15 @@ import (
 // Role distinguishes the two flows a fire creates.
 type Role int
 
-// Flow roles.
+// Flow roles. Sender/Receiver are the push model (one-directional); the
+// Requester/Responder pair carries request/response emulations. For telemetry,
+// the side that *receives* the download (Receiver, Requester) counts as Rx and
+// the side that *sends* it (Sender, Responder) as Tx.
 const (
 	Sender Role = iota
 	Receiver
+	Responder
+	Requester
 )
 
 // Placed is one configured flow on an agent. FlowIDs are only unique per agent,
@@ -192,6 +197,12 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return err
 	}
 
+	// Request/response emulations (e.g. https-browse) need a responder/requester
+	// pair over a real connection, not the one-directional sender/receiver pair.
+	if emul.Has(ev.Flow.Kind) && emul.ModeOf(ev.Flow.Kind) == emul.ModeRequestResponse {
+		return c.fireRequestResponse(ctx, ev, to, fromAgent, fromAddr, toAgent, toAddr)
+	}
+
 	dp := ev.Datapath
 	if dp == "" {
 		dp = "udp"
@@ -230,6 +241,48 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return fmt.Errorf("event %q: start sender: %w", ev.Name, err)
 	}
 	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name)
+	return nil
+}
+
+// fireRequestResponse places a request/response emulation: a responder on the
+// destination agent (binding an ephemeral port) and a requester on the source
+// agent that dials it and drives the behavior script. The download bytes flow
+// responder→requester over the chosen transport.
+func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event, to scenario.Endpoint, fromAgent loomv1.ControlClient, fromAddr string, toAgent loomv1.ControlClient, toAddr string) error {
+	transport := emul.DefaultTransport(ev.Flow.Kind)
+	if v, ok := ev.Flow.Params["transport"]; ok {
+		if s := fmt.Sprint(v); s != "" {
+			transport = s
+		}
+	}
+
+	// Responder on the destination agent; it returns its ephemeral data port.
+	respCfg, err := toAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: &loomv1.FlowSpec{
+		Role: loomv1.FlowRole_FLOW_ROLE_RESPONDER, Transport: transport,
+		PacketSize: int32ToU32(packetSize(ev)),
+	}})
+	if err != nil {
+		return fmt.Errorf("event %q: configure responder: %w", ev.Name, err)
+	}
+	if _, err := toAgent.Start(ctx, &loomv1.StartRequest{FlowId: respCfg.GetFlowId()}); err != nil {
+		return fmt.Errorf("event %q: start responder: %w", ev.Name, err)
+	}
+	c.track(toAgent, toAddr, respCfg.GetFlowId(), Responder, ev.Name)
+
+	// Requester on the source agent, dialing the responder's data address.
+	dataHost := to.Address
+	if dataHost == "" {
+		dataHost = hostOf(toAddr)
+	}
+	target := net.JoinHostPort(dataHost, strconv.Itoa(int(respCfg.GetDataPort())))
+	reqCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: requesterSpec(ev, transport, target, c.s.Seed)})
+	if err != nil {
+		return fmt.Errorf("event %q: configure requester: %w", ev.Name, err)
+	}
+	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{FlowId: reqCfg.GetFlowId()}); err != nil {
+		return fmt.Errorf("event %q: start requester: %w", ev.Name, err)
+	}
+	c.track(fromAgent, fromAddr, reqCfg.GetFlowId(), Requester, ev.Name)
 	return nil
 }
 
@@ -284,6 +337,36 @@ func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint, se
 	case spec.Emulation != "":
 		// Convenience: emulations may set a `duration` knob in the flow block
 		// instead of a stop.after — e.g. a voip-call's call length.
+		if v, ok := ev.Flow.Params["duration"]; ok {
+			if d, err := units.ParseDuration(fmt.Sprint(v)); err == nil {
+				spec.Duration = durationpb.New(d)
+			}
+		}
+	}
+	spec.Count = ev.Stop.Count
+	spec.Volume = ev.Stop.Volume
+	return spec
+}
+
+// requesterSpec builds the requester's FlowSpec for a request/response emulation:
+// the emulation name + params (compiled to a script on the agent), the transport,
+// and the responder target. Stop conditions mirror senderSpec.
+func requesterSpec(ev scenario.Event, transport, target string, seed int64) *loomv1.FlowSpec {
+	spec := &loomv1.FlowSpec{
+		Role:       loomv1.FlowRole_FLOW_ROLE_REQUESTER,
+		Transport:  transport,
+		Target:     target,
+		Emulation:  ev.Flow.Kind,
+		Params:     stringParams(ev.Flow.Params),
+		Seed:       seed,
+		PacketSize: int32ToU32(packetSize(ev)),
+	}
+	switch {
+	case ev.Stop.After > 0:
+		spec.Duration = durationpb.New(ev.Stop.After)
+	default:
+		// Convenience: an emulation may carry its own `duration` knob instead of a
+		// stop.after (mirrors senderSpec).
 		if v, ok := ev.Flow.Params["duration"]; ok {
 			if d, err := units.ParseDuration(fmt.Sprint(v)); err == nil {
 				spec.Duration = durationpb.New(d)
