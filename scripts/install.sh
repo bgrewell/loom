@@ -8,9 +8,13 @@
 # from source with `go install` (needs Go).
 #
 # Environment overrides:
-#   LOOM_VERSION   version/tag to install (default: latest release, else source)
-#   LOOM_PREFIX    install dir (default: /usr/local/bin as root, else ~/.local/bin)
-#   LOOM_BINARIES  space-separated subset to install (default: all three)
+#   LOOM_VERSION        version/tag to install (default: latest release, else source)
+#   LOOM_PREFIX         install dir (default: /usr/local/bin as root, else ~/.local/bin)
+#   LOOM_BINARIES       space-separated subset to install (default: all three)
+#   LOOM_SERVICE        install loomd as a systemd service: 1/yes to install,
+#                       0/no to skip. Unset = prompt on a terminal, skip when piped.
+#   LOOM_SERVICE_ADDR   LOOMD_ADDR for the service (default ":9551")
+#   LOOM_SERVICE_TOKEN  LOOMD_TOKEN for the service (default: none)
 set -euo pipefail
 
 REPO="bgrewell/loom"
@@ -94,6 +98,72 @@ if install_from_release "$RESOLVED"; then
 else
 	warn "no prebuilt release found for ${RESOLVED:-latest}; building from source"
 	install_from_source
+fi
+
+# --- optional: install loomd as a systemd service (skip the `loomd &` dance) ---
+UNIT_PATH=/etc/systemd/system/loomd.service
+
+want_service() {
+	# Only relevant when loomd was installed, systemd is present, and we're root.
+	case " ${BINS[*]} " in *" loomd "*) ;; *) return 1 ;; esac
+	command -v systemctl >/dev/null 2>&1 || return 1
+	[ "$(id -u)" -eq 0 ] || return 1
+
+	local want="${LOOM_SERVICE:-}" ans
+	if [ -z "$want" ]; then
+		# Prompt only when a real terminal is attached; `curl | bash` has the script
+		# on stdin, so read from the controlling tty instead.
+		if [ -r /dev/tty ]; then
+			printf 'Install and start loomd as a systemd service? [y/N] ' >/dev/tty
+			read -r ans </dev/tty || ans=""
+			case "$ans" in y | Y | yes | YES) want=1 ;; *) want=0 ;; esac
+		else
+			want=0
+		fi
+	fi
+	case "$want" in 1 | yes | YES | true | TRUE) return 0 ;; *) return 1 ;; esac
+}
+
+install_service() {
+	local addr="${LOOM_SERVICE_ADDR:-:9551}" token="${LOOM_SERVICE_TOKEN:-}"
+	info "installing systemd service → $UNIT_PATH"
+	{
+		printf '[Unit]\n'
+		printf 'Description=loom agent (loomd)\n'
+		printf 'Documentation=https://github.com/%s\n' "$REPO"
+		printf 'After=network-online.target\n'
+		printf 'Wants=network-online.target\n\n'
+		printf '[Service]\n'
+		printf 'Type=simple\n'
+		printf 'Environment=LOOMD_ADDR=%s\n' "$addr"
+		[ -n "$token" ] && printf 'Environment=LOOMD_TOKEN=%s\n' "$token"
+		printf 'ExecStart=%s/loomd\n' "$BINDIR"
+		printf 'Restart=on-failure\n'
+		printf 'RestartSec=2\n\n'
+		printf '[Install]\n'
+		printf 'WantedBy=multi-user.target\n'
+	} >"$UNIT_PATH"
+
+	if [ -z "$token" ]; then
+		case "$addr" in
+		127.0.0.1:* | localhost:*) ;;
+		*) warn "service listens on $addr with no LOOM_SERVICE_TOKEN — the control plane is unauthenticated" ;;
+		esac
+	fi
+
+	systemctl daemon-reload
+	systemctl enable --now loomd.service
+	info "loomd service enabled and started (systemctl status loomd)"
+}
+
+# On a re-run/upgrade where the service already exists, just restart it to pick up
+# the new binary — don't re-prompt. A fresh install prompts (or honors LOOM_SERVICE).
+if [ -f "$UNIT_PATH" ] && command -v systemctl >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+	info "existing loomd service found — restarting to pick up the new binary"
+	systemctl daemon-reload
+	systemctl restart loomd.service 2>/dev/null || warn "could not restart loomd.service"
+elif want_service; then
+	install_service
 fi
 
 # --- verify + PATH hint ---

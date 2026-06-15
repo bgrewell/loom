@@ -1,0 +1,18 @@
+[Unit]
+Description=loom agent (loomd)
+Documentation=https://github.com/bgrewell/loom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Control-plane listen address. ":9551" exposes it on every interface; set a
+# token below before doing that on an untrusted network.
+Environment=LOOMD_ADDR=:9551
+#Environment=LOOMD_TOKEN=change-me
+ExecStart=/usr/local/bin/loomd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
