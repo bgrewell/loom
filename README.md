@@ -31,8 +31,13 @@ EOF
 $ loomctl run -f test.yaml -a 'client=10.0.0.1:9551,server=10.0.0.2:9551'
 [14:03:01] tx 0.99 Gbps  rx 0.99 Gbps  (2 flows)
 ...
-done: placed 2 flows
+--- summary --- elapsed 10.1s
+  tx 1.24 GB   avg 0.99 Gbps
+  rx 1.24 GB   avg 0.99 Gbps
 ```
+
+The run ends as soon as the flow finishes (not at the horizon); add `--per-flow`
+for a per-flow breakdown — handy when flows take different network paths.
 
 **Or a quick one-host check** — generate, pace, and measure a flow locally with
 no receiver (the `discard` datapath drops after accounting):
