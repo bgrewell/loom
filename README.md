@@ -1,38 +1,18 @@
 # loom
 
-> **Status: phase 1 in progress.** The design is settled
-> ([DESIGN.md](DESIGN.md) / [DECISIONS.md](DECISIONS.md)); the `core/` scaffold and
-> the `loom` CLI are taking shape. Apache-2.0.
+**loom** is a distributed network **traffic generation and measurement** system
+for Linux. It weaves many independent traffic flows — raw protocols and realistic
+application behaviors — across many machines, on a schedule you define, and
+measures what happens in real time.
 
-**loom** is a modern, distributed network **traffic generation and measurement**
-system for Linux. It weaves many independent traffic flows — raw protocols and
-realistic application emulations — across many points, on a schedule you define,
-and measures what happens, in real time.
-
-It's the consolidation of a decade of scattered, half-finished traffic and
-network-measurement projects into one clean core library with thin CLI / API /
-web / control-plane adapters around it.
-
-## What it's for
-
-- **iperf-esque quick tests** — one command, point-to-point throughput/latency.
-- **Complex multi-point scenarios** — N agents, overlapping flows, randomized
-  timing, tag-based endpoint selection, driven by a declarative scenario file.
-- **Application emulation** — HTTPS browsing, VoIP calls, SSH sessions,
-  Prometheus remote-write, FTP transfers — not just raw packet blasting.
-- **Pluggable everywhere** — schedulers, packet pumps, and datapaths
-  (kernel sockets → AF_PACKET → AF_XDP → DPDK) are all swappable.
-- **Measurement-first** — streaming and end-of-run reporting of throughput,
-  latency, jitter, loss, one-way delay (optional NIC hardware timestamping).
-
-## Try it (phase 1)
-
-A single flow runs today — generated, paced, and measured locally (the `discard`
-datapath generates and accounts without needing a receiver):
+Think of it as *iperf when you want a quick number, and a programmable traffic
+fabric when you don't*: one command for a point-to-point throughput test, or a
+declarative scenario driving dozens of agents with overlapping, randomized flows.
 
 ```console
-$ go run ./cmd/loom run --rate 50Mbps --duration 5s
+$ loom run --rate 50Mbps --duration 5s
 [   1.0s]   49.98 Mbps      4459 pkts     5.95 MB
+[   2.0s]   50.01 Mbps      4461 pkts     5.95 MB
 ...
 --- summary ---
   duration : 5s
@@ -40,21 +20,49 @@ $ go run ./cmd/loom run --rate 50Mbps --duration 5s
   avg rate : 49.9 Mbps
 ```
 
-Bound by packets (`--count`), volume (`--bytes 100MB`), or time (`--duration`);
-pick a datapath (`--datapath udp --target host:port`), payload, and packet size;
-`--output json` for machine-readable reports.
+## Why loom
 
-## The design
+- **One tool, two modes.** A single-flow CLI for quick tests, and a control
+  plane that runs multi-point scenarios across a fleet of agents.
+- **Realistic, not just packet-blasting.** Raw UDP/TCP today; HTTPS/VoIP/SSH/
+  Prometheus/FTP *behavior* emulation on the roadmap.
+- **Fast where it counts.** A zero-copy data plane with pluggable backends —
+  kernel sockets by default, **AF_XDP** for line-rate, DPDK to come — behind one
+  interface, so speed is a backend choice, not a rewrite.
+- **Measurement-first.** Streaming and end-of-run throughput, latency, jitter,
+  and loss; one-way delay and NIC hardware timestamping are designed in.
+- **Reproducible.** Seeded scenarios replay identically, so you can compare runs
+  and catch regressions.
 
-The full architecture is in **[DESIGN.md](DESIGN.md)**. This repo exists to be
-discussed and riffed on — open issues, comment on the RFC PR, or just edit the
-doc.
+## Get started
 
-## Background
+| You are… | Start here |
+|---|---|
+| New to loom | **[Getting Started](docs/getting-started.md)** → **[Core Concepts](docs/concepts.md)** |
+| Evaluating / an expert | **[Architecture](docs/architecture.md)** → **[Performance](docs/benchmarks.md)** |
+| Deploying it | **[Deployment](docs/deployment.md)** |
+| Looking something up | **[Reference](docs/reference/cli.md)** · **[Scenario schema](docs/scenario-schema.md)** |
 
-This grew out of an audit of ~35 prior projects (tgams, traffic, blaster, bperf,
-nperfmon, packet, and many more). [DESIGN.md, Appendix A](DESIGN.md#appendix-a--harvest-map)
-records exactly which working pieces we plan to lift from where.
+The full manual lives in **[docs/](docs/README.md)**.
+
+## Install
+
+```console
+# From source (Go 1.22+):
+go install github.com/bgrewell/loom/cmd/loom@latest     # the CLI
+go install github.com/bgrewell/loom/cmd/loomd@latest    # the agent
+go install github.com/bgrewell/loom/cmd/loomctl@latest  # the controller
+```
+
+Linux only for now. See [Getting Started](docs/getting-started.md) for a guided
+first run.
+
+## Status
+
+Active development. The architecture is settled and the single-host engine,
+distributed control plane, telemetry, and an AF_XDP datapath are in; application
+emulations and a web dashboard are next. Design decisions are recorded as ADRs in
+[DECISIONS.md](DECISIONS.md); the plan is in [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 
