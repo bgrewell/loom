@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bgrewell/loom/core/components"
 	"github.com/bgrewell/loom/core/datapath"
 	"github.com/bgrewell/loom/core/generator"
 	"github.com/bgrewell/loom/core/scheduler"
@@ -32,14 +33,16 @@ type Spec struct {
 }
 
 // Build constructs a Flow from a Spec, resolving the generator, scheduler, and
-// datapath through their registries. The caller owns the datapath and should
-// Close it (via Flow.Datapath) when done.
-func Build(spec Spec) (*Flow, error) {
+// datapath through c's registries (ADR-0022). A nil c uses components.Default().
+// The caller owns the datapath and should Close it (via Flow.Datapath) when done.
+func Build(spec Spec, c *components.Components) (*Flow, error) {
+	c = components.OrDefault(c)
+
 	gname := spec.Generator
 	if gname == "" {
 		gname = "stream"
 	}
-	gen, err := generator.Registry.Build(gname, generator.Options{
+	gen, err := c.Generators.Build(gname, generator.Options{
 		Payload:    spec.Payload,
 		PacketSize: spec.PacketSize,
 	})
@@ -47,7 +50,7 @@ func Build(spec Spec) (*Flow, error) {
 		return nil, err
 	}
 
-	sched, err := schedulerForRate(spec.Rate, spec.PacketSize)
+	sched, err := schedulerForRate(c, spec.Rate, spec.PacketSize)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +59,7 @@ func Build(spec Spec) (*Flow, error) {
 	if dname == "" {
 		dname = "discard"
 	}
-	dp, err := datapath.Registry.Build(dname, datapath.Options{
+	dp, err := c.TxDatapaths.Build(dname, datapath.Options{
 		Addr: spec.Target, FrameSize: spec.PacketSize, Iface: spec.Iface, Queue: spec.Queue,
 	})
 	if err != nil {
@@ -74,7 +77,7 @@ func Build(spec Spec) (*Flow, error) {
 
 // schedulerForRate returns a soak scheduler for an empty rate, or an interval
 // scheduler paced to approximate the given bit rate.
-func schedulerForRate(rate string, pkt int) (scheduler.Scheduler, error) {
+func schedulerForRate(c *components.Components, rate string, pkt int) (scheduler.Scheduler, error) {
 	if strings.TrimSpace(rate) == "" {
 		return scheduler.Soak{}, nil
 	}
@@ -93,5 +96,5 @@ func schedulerForRate(rate string, pkt int) (scheduler.Scheduler, error) {
 	if gap < 1 {
 		gap = 1
 	}
-	return scheduler.Registry.Build("interval", scheduler.Options{Interval: gap})
+	return c.Schedulers.Build("interval", scheduler.Options{Interval: gap})
 }

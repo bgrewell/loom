@@ -154,7 +154,7 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 		if dname == "" {
 			dname = "udp"
 		}
-		rx, err := datapath.RxRegistry.Build(dname, datapath.Options{
+		rx, err := s.comps.RxDatapaths.Build(dname, datapath.Options{
 			FrameSize: int(p.GetPacketSize()), Iface: p.GetIface(), Queue: int(p.GetQueue()),
 		})
 		if err != nil {
@@ -177,7 +177,7 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "flow spec: %v", err)
 	}
-	fl, err := flow.Build(spec)
+	fl, err := flow.Build(spec, s.comps)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "build flow: %v", err)
 	}

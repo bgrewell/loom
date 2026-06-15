@@ -33,15 +33,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := control.NewServer(version)
+	var opts []control.Option
 	if v := os.Getenv("LOOMD_TELEMETRY"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
-			srv.SetTelemetryInterval(d)
+			opts = append(opts, control.WithTelemetryInterval(d))
 		}
 	}
 	if v := os.Getenv("LOOMD_TOKEN"); v != "" {
-		srv.SetAuthToken(v)
+		opts = append(opts, control.WithAuthToken(v))
 	}
+	srv := control.NewServer(version, opts...)
 	if !srv.AuthEnabled() && !isLoopback(lis.Addr()) {
 		fmt.Fprintf(os.Stderr, "loomd: WARNING: listening on a routable address %s with no LOOMD_TOKEN — the control plane is unauthenticated\n", lis.Addr())
 	}

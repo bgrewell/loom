@@ -22,8 +22,7 @@ func startAuthedAgent(t *testing.T, token string) (string, func()) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv := NewServer("test-1.0")
-	srv.SetAuthToken(token)
+	srv := NewServer("test-1.0", WithAuthToken(token))
 	gs := NewGRPCServer(srv)
 	go func() { _ = gs.Serve(lis) }()
 	return lis.Addr().String(), func() { gs.Stop() }

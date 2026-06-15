@@ -76,7 +76,7 @@ available; a web dashboard shows live flow state.
 - [ ] **Reporter sinks** — file/json, prometheus, socket
 - [x] **Wire/proto discipline** — reserved ranges, FlowRole enum, api_version
       handshake, protobuf.Duration ([ADR-0021](../DECISIONS.md#adr-0021--wireproto-evolution-discipline)); auth rides call metadata (ADR-0014)
-- [ ] **Component DI + functional-option constructors** ([ADR-0022](../DECISIONS.md#adr-0022--inject-component-registries-functional-options-on-constructors))
+- [x] **Component DI + functional-option constructors** ([ADR-0022](../DECISIONS.md#adr-0022--inject-component-registries-functional-options-on-constructors)) — `core/components`, `flow.Build(spec, *Components)`, `control.NewServer(…Option)`, `controller.WithDialer`
 - [ ] **Web dashboard** + REST/gRPC-gateway API
 - [x] **Optional security** — shared auth token (ADR-0014): `LOOMD_TOKEN` on the
       agent, `--token`/`$LOOM_TOKEN` on loomctl; loomd defaults to loopback and

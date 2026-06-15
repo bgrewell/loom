@@ -10,6 +10,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"strconv"
@@ -47,11 +48,17 @@ type Placed struct {
 // Key uniquely identifies a placed flow across agents.
 func (p Placed) Key() string { return p.AgentAddr + "/" + p.FlowID }
 
+// Dialer opens a control connection to an agent address, returning a client and
+// a closer. Injectable (ADR-0022) so the controller is testable without real
+// gRPC; the default dials over the network with the controller's token.
+type Dialer func(addr string) (loomv1.ControlClient, io.Closer, error)
+
 // Controller drives a scenario across agents addressed by endpoint name.
 type Controller struct {
 	s      *scenario.Scenario
 	addrs  map[string]string // endpoint name -> agent control address
 	token  string            // shared control-plane token (ADR-0014)
+	dialer Dialer
 	rng    *rand.Rand
 	agents map[string]loomv1.ControlClient
 	closes []func()
@@ -69,6 +76,12 @@ func WithToken(token string) Option {
 	return func(c *Controller) { c.token = token }
 }
 
+// WithDialer overrides how the controller connects to agents (e.g. an in-process
+// client in tests).
+func WithDialer(d Dialer) Option {
+	return func(c *Controller) { c.dialer = d }
+}
+
 // New returns a Controller for s, with addrs mapping each endpoint name to its
 // agent's control address.
 func New(s *scenario.Scenario, addrs map[string]string, opts ...Option) *Controller {
@@ -80,6 +93,11 @@ func New(s *scenario.Scenario, addrs map[string]string, opts ...Option) *Control
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	if c.dialer == nil {
+		c.dialer = func(addr string) (loomv1.ControlClient, io.Closer, error) {
+			return control.Dial(addr, control.WithToken(c.token))
+		}
 	}
 	return c
 }
@@ -221,12 +239,12 @@ func (c *Controller) agentFor(endpoint string) (loomv1.ControlClient, string, er
 	if cl, ok := c.agents[addr]; ok {
 		return cl, addr, nil
 	}
-	cl, conn, err := control.Dial(addr, control.WithToken(c.token))
+	cl, closer, err := c.dialer(addr)
 	if err != nil {
 		return nil, "", err
 	}
 	c.agents[addr] = cl
-	c.closes = append(c.closes, func() { _ = conn.Close() })
+	c.closes = append(c.closes, func() { _ = closer.Close() })
 	return cl, addr, nil
 }
 
