@@ -25,6 +25,7 @@ import (
 	"github.com/bgrewell/loom/core/scenario"
 	"github.com/bgrewell/loom/core/selection"
 	"github.com/bgrewell/loom/core/timeline"
+	"github.com/bgrewell/loom/core/timesync"
 	"github.com/bgrewell/loom/core/units"
 )
 
@@ -88,6 +89,7 @@ type Controller struct {
 
 	mu     sync.Mutex
 	placed []Placed
+	sync   map[string]timesync.Sample // endpoint -> measured clock offset/delay
 }
 
 // Option configures a Controller.
@@ -113,6 +115,7 @@ func New(s *scenario.Scenario, addrs map[string]string, opts ...Option) *Control
 		addrs:  addrs,
 		rng:    rand.New(rand.NewSource(s.Seed)),
 		agents: make(map[string]loomv1.ControlClient),
+		sync:   make(map[string]timesync.Sample),
 	}
 	for _, o := range opts {
 		o(c)
@@ -216,7 +219,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 	// Request/response emulations (e.g. https-browse) need a responder/requester
 	// pair over a real connection, not the one-directional sender/receiver pair.
 	if emul.Has(ev.Flow.Kind) && emul.ModeOf(ev.Flow.Kind) == emul.ModeRequestResponse {
-		return c.fireRequestResponse(ctx, ev, to, fromAgent, fromAddr, toAgent, toAddr)
+		return c.fireRequestResponse(ctx, ev, from, to, fromAgent, fromAddr, toAgent, toAddr)
 	}
 
 	dp := ev.Datapath
@@ -249,11 +252,17 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		target = net.JoinHostPort(dataHost, strconv.Itoa(int(rxCfg.GetDataPort())))
 	}
 
+	gate := c.startGate()
 	txCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: senderSpec(ev, dp, target, from, c.s.Seed)})
 	if err != nil {
 		return fmt.Errorf("event %q: configure sender: %w", ev.Name, err)
 	}
-	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{FlowId: txCfg.GetFlowId()}); err != nil {
+	// Open the sender at the shared gate (the receiver is already draining), so
+	// the traffic begins at a precise, known instant — and, across hosts, in
+	// lockstep with other sources.
+	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{
+		FlowId: txCfg.GetFlowId(), StartAtUnixNanos: c.startAtFor(from.Name, gate),
+	}); err != nil {
 		return fmt.Errorf("event %q: start sender: %w", ev.Name, err)
 	}
 	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name)
@@ -264,7 +273,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 // destination agent (binding an ephemeral port) and a requester on the source
 // agent that dials it and drives the behavior script. The download bytes flow
 // responder→requester over the chosen transport.
-func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event, to scenario.Endpoint, fromAgent loomv1.ControlClient, fromAddr string, toAgent loomv1.ControlClient, toAddr string) error {
+func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event, from, to scenario.Endpoint, fromAgent loomv1.ControlClient, fromAddr string, toAgent loomv1.ControlClient, toAddr string) error {
 	transport := emul.DefaultTransport(ev.Flow.Kind)
 	if v, ok := ev.Flow.Params["transport"]; ok {
 		if s := fmt.Sprint(v); s != "" {
@@ -291,11 +300,14 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 		dataHost = hostOf(toAddr)
 	}
 	target := net.JoinHostPort(dataHost, strconv.Itoa(int(respCfg.GetDataPort())))
+	gate := c.startGate()
 	reqCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: requesterSpec(ev, transport, target, c.s.Seed)})
 	if err != nil {
 		return fmt.Errorf("event %q: configure requester: %w", ev.Name, err)
 	}
-	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{FlowId: reqCfg.GetFlowId()}); err != nil {
+	if _, err := fromAgent.Start(ctx, &loomv1.StartRequest{
+		FlowId: reqCfg.GetFlowId(), StartAtUnixNanos: c.startAtFor(from.Name, gate),
+	}); err != nil {
 		return fmt.Errorf("event %q: start requester: %w", ev.Name, err)
 	}
 	c.track(fromAgent, fromAddr, reqCfg.GetFlowId(), Requester, ev.Name)
@@ -317,6 +329,35 @@ func (c *Controller) agentFor(endpoint string) (loomv1.ControlClient, string, er
 	c.agents[addr] = cl
 	c.closes = append(c.closes, func() { _ = closer.Close() })
 	return cl, addr, nil
+}
+
+// startGate returns a shared start time (on the controller's clock) far enough in
+// the future that a Start RPC reaches every agent before the gate opens. The
+// slack scales with the slowest measured round-trip delay so even high-latency
+// links stay in lockstep; a floor covers RPC/processing on fast links.
+func (c *Controller) startGate() time.Time {
+	var maxDelay time.Duration
+	c.mu.Lock()
+	for _, s := range c.sync {
+		if s.Delay > maxDelay {
+			maxDelay = s.Delay
+		}
+	}
+	c.mu.Unlock()
+	return time.Now().Add(100*time.Millisecond + maxDelay)
+}
+
+// startAtFor translates a controller-clock gate time into endpoint's agent clock
+// using the measured TimeSync offset, returning unix nanoseconds (0 if the gate
+// is zero, meaning "start immediately").
+func (c *Controller) startAtFor(endpoint string, gate time.Time) int64 {
+	if gate.IsZero() {
+		return 0
+	}
+	c.mu.Lock()
+	off := c.sync[endpoint].Offset
+	c.mu.Unlock()
+	return gate.Add(off).UnixNano()
 }
 
 func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Role, event string) {

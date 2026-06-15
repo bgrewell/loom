@@ -28,5 +28,12 @@ func (c *Controller) SyncAgents(ctx context.Context) (map[string]timesync.Sample
 		}
 		out[endpoint] = s
 	}
+	// Remember the offsets/delays so fire() can schedule a shared start time
+	// translated into each agent's clock (the scheduled-start gate).
+	c.mu.Lock()
+	for endpoint, s := range out {
+		c.sync[endpoint] = s
+	}
+	c.mu.Unlock()
 	return out, nil
 }

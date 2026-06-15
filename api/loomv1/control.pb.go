@@ -759,10 +759,15 @@ func (*ArmResponse) Descriptor() ([]byte, []int) {
 }
 
 type StartRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FlowId        string                 `protobuf:"bytes,1,opt,name=flow_id,json=flowId,proto3" json:"flow_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	FlowId string                 `protobuf:"bytes,1,opt,name=flow_id,json=flowId,proto3" json:"flow_id,omitempty"`
+	// start_at_unix_nanos schedules the flow to begin at an absolute time on the
+	// agent's own clock (the controller translates a shared target time into each
+	// agent's clock using the TimeSync offset, so flows on different hosts begin in
+	// lockstep regardless of link latency). 0 (or a past time) starts immediately.
+	StartAtUnixNanos int64 `protobuf:"varint,2,opt,name=start_at_unix_nanos,json=startAtUnixNanos,proto3" json:"start_at_unix_nanos,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *StartRequest) Reset() {
@@ -800,6 +805,13 @@ func (x *StartRequest) GetFlowId() string {
 		return x.FlowId
 	}
 	return ""
+}
+
+func (x *StartRequest) GetStartAtUnixNanos() int64 {
+	if x != nil {
+		return x.StartAtUnixNanos
+	}
+	return 0
 }
 
 type StartResponse struct {
@@ -1284,9 +1296,10 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"ArmRequest\x12\x17\n" +
 	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\r\n" +
-	"\vArmResponse\"'\n" +
+	"\vArmResponse\"V\n" +
 	"\fStartRequest\x12\x17\n" +
-	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\x0f\n" +
+	"\aflow_id\x18\x01 \x01(\tR\x06flowId\x12-\n" +
+	"\x13start_at_unix_nanos\x18\x02 \x01(\x03R\x10startAtUnixNanos\"\x0f\n" +
 	"\rStartResponse\"&\n" +
 	"\vStopRequest\x12\x17\n" +
 	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\x0e\n" +

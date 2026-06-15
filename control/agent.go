@@ -74,7 +74,12 @@ func (m *flowManager) get(id string) (*managedFlow, bool) {
 	return mf, ok
 }
 
-func (m *flowManager) start(id string) error {
+// start begins a configured flow. If startAt is non-zero and in the future, the
+// run goroutine waits until then (on the agent's own clock) before generating —
+// the controller schedules a shared start time across agents so flows begin in
+// lockstep. A zero or past startAt runs immediately. The wait is interruptible by
+// Stop (ctx cancellation).
+func (m *flowManager) start(id string, startAt time.Time) error {
 	mf, ok := m.get(id)
 	if !ok {
 		return fmt.Errorf("flow %q not found", id)
@@ -96,6 +101,17 @@ func (m *flowManager) start(id string) error {
 				mf.setErr(fmt.Errorf("flow %q panicked: %v", id, r))
 			}
 		}()
+		if !startAt.IsZero() {
+			if d := time.Until(startAt); d > 0 {
+				timer := time.NewTimer(d)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return // stopped before the gate opened
+				case <-timer.C:
+				}
+			}
+		}
 		mf.setErr(mf.run.Run(ctx))
 	}()
 	return nil
@@ -312,9 +328,14 @@ func (s *Server) Arm(_ context.Context, req *loomv1.ArmRequest) (*loomv1.ArmResp
 	return &loomv1.ArmResponse{}, nil
 }
 
-// Start runs a configured flow.
+// Start runs a configured flow, optionally at a scheduled time (start_at) on this
+// agent's clock so flows across agents begin in lockstep.
 func (s *Server) Start(_ context.Context, req *loomv1.StartRequest) (*loomv1.StartResponse, error) {
-	if err := s.mgr.start(req.GetFlowId()); err != nil {
+	var startAt time.Time
+	if ns := req.GetStartAtUnixNanos(); ns > 0 {
+		startAt = time.Unix(0, ns)
+	}
+	if err := s.mgr.start(req.GetFlowId(), startAt); err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
 	}
 	return &loomv1.StartResponse{}, nil
