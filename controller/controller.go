@@ -21,6 +21,7 @@ import (
 
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
 	"github.com/bgrewell/loom/control"
+	"github.com/bgrewell/loom/core/emul"
 	"github.com/bgrewell/loom/core/scenario"
 	"github.com/bgrewell/loom/core/selection"
 	"github.com/bgrewell/loom/core/timeline"
@@ -220,7 +221,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		target = net.JoinHostPort(dataHost, strconv.Itoa(int(rxCfg.GetDataPort())))
 	}
 
-	txCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: senderSpec(ev, dp, target, from)})
+	txCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: senderSpec(ev, dp, target, from, c.s.Seed)})
 	if err != nil {
 		return fmt.Errorf("event %q: configure sender: %w", ev.Name, err)
 	}
@@ -256,8 +257,9 @@ func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Rol
 
 // senderSpec builds the sender's FlowSpec from an event, the chosen datapath,
 // the receiver target (socket datapaths), and the source endpoint (iface/queue
-// for NIC-bound datapaths).
-func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint) *loomv1.FlowSpec {
+// for NIC-bound datapaths). If the event's flow kind names an emulation, the spec
+// carries it (and its params) so the agent runs the behavior engine.
+func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint, seed int64) *loomv1.FlowSpec {
 	spec := &loomv1.FlowSpec{
 		Role:       loomv1.FlowRole_FLOW_ROLE_SENDER,
 		Datapath:   dp,
@@ -266,6 +268,11 @@ func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint) *l
 		PacketSize: int32ToU32(packetSize(ev)),
 		Iface:      from.Iface,
 		Queue:      int32ToU32(from.Queue),
+	}
+	if emul.Has(ev.Flow.Kind) {
+		spec.Emulation = ev.Flow.Kind
+		spec.Params = stringParams(ev.Flow.Params)
+		spec.Seed = seed
 	}
 	if v, ok := ev.Flow.Params["rate"]; ok {
 		spec.Rate = fmt.Sprint(v)
@@ -276,6 +283,18 @@ func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint) *l
 	spec.Count = ev.Stop.Count
 	spec.Volume = ev.Stop.Volume
 	return spec
+}
+
+// stringParams stringifies a scenario flow's params for the emulation engine.
+func stringParams(p map[string]any) map[string]string {
+	if len(p) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(p))
+	for k, v := range p {
+		out[k] = fmt.Sprint(v)
+	}
+	return out
 }
 
 func packetSize(ev scenario.Event) int {

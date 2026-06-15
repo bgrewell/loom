@@ -7,6 +7,8 @@ Task-focused walkthroughs. Each is self-contained and assumes only
   (covered in Getting Started).
 - **[Run a multi-agent scenario](multi-agent-scenario.md)** — start agents, write
   a scenario file, and drive it with the controller.
+- **[Application emulations](emulations.md)** — reproduce real app traffic shapes
+  (VoIP, HTTPS browse, Prometheus, SSH) with the behavior-script engine.
 - **[Choosing a datapath](datapaths.md)** — sockets vs AF_XDP, and when each is
   the right call.
 - **[Securing the control plane](securing-the-control-plane.md)** — tokens, bind

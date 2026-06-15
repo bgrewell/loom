@@ -57,12 +57,16 @@ selected endpoints on a timeline with overlap and random timing.
 **DoD:** realistic app emulations run over a scenario; the AF_XDP datapath is
 available; a web dashboard shows live flow state.
 
-- [ ] **Behavior-script primitive** (emulation engine) — blueprint: emulation
-- [ ] **https-browse** + **dynamic-webserver** — blueprint: dynamic-webserver
-- [ ] **voip-call** (CBR UDP)
-- [ ] **ssh-session**
-- [ ] **prometheus-sender**
-- [ ] **ftp-transfer**
+- [x] **Behavior-script primitive** (emulation engine) — `core/emul`: Dist +
+      BehaviorScript + Runner (a flow.Runner), selected via scenario `flow.kind`
+- [x] **voip-call** (CBR UDP) — G.711/G.729
+- [x] **https-browse** (client shape: bursty object fetches + think gaps) —
+      real **dynamic-webserver** responses still to come (needs the responder role)
+- [x] **ssh-session** (interactive keystrokes + optional bulk)
+- [x] **prometheus-sender** (periodic remote-write batches)
+- [ ] **ftp-transfer** — needs the control+data-channel responder role
+- [ ] **Responder role** — server-side emulation (dynamic-webserver, FTP data
+      channel) so request/response sizes are real, not just client-shape
 - [x] **Batch-first datapath interface** + per-packet RX metadata — done; the
       seam is ready for a native AF_XDP backend with no interface change
       ([ADR-0019](../DECISIONS.md#adr-0019--batch-first-datapath-interface),

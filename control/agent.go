@@ -15,6 +15,7 @@ import (
 
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
 	"github.com/bgrewell/loom/core/datapath"
+	"github.com/bgrewell/loom/core/emul"
 	"github.com/bgrewell/loom/core/flow"
 )
 
@@ -172,7 +173,12 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 		return &loomv1.ConfigureResponse{FlowId: id, DataPort: port}, nil
 	}
 
-	// Sender.
+	// Emulation sender: a behavior-script runner over the chosen datapath.
+	if p.GetEmulation() != "" {
+		return s.configureEmulation(p)
+	}
+
+	// Raw sender.
 	spec, err := toSpec(p)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "flow spec: %v", err)
@@ -184,6 +190,44 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 	id, err := s.mgr.configure(fl, fl.Datapath, 0)
 	if err != nil {
 		_ = fl.Datapath.Close() // release the datapath we just built
+		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
+	}
+	return &loomv1.ConfigureResponse{FlowId: id}, nil
+}
+
+// configureEmulation builds an application-behavior emulation sender: it resolves
+// the datapath and compiles the named emulation to a behavior script, then wraps
+// them in an emulation runner.
+func (s *Server) configureEmulation(p *loomv1.FlowSpec) (*loomv1.ConfigureResponse, error) {
+	if err := validatePacketSize(p.GetPacketSize()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	if err := validateTarget(p.GetTarget()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	dname := p.GetDatapath()
+	if dname == "" {
+		dname = "discard"
+	}
+	dp, err := s.comps.TxDatapaths.Build(dname, datapath.Options{
+		Addr: p.GetTarget(), FrameSize: int(p.GetPacketSize()), Iface: p.GetIface(), Queue: int(p.GetQueue()),
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "build datapath: %v", err)
+	}
+	script, err := emul.Build(p.GetEmulation(), emul.Params(p.GetParams()))
+	if err != nil {
+		_ = dp.Close()
+		return nil, status.Errorf(codes.InvalidArgument, "emulation: %v", err)
+	}
+	var dur time.Duration
+	if d := p.GetDuration(); d != nil {
+		dur = d.AsDuration()
+	}
+	runner := emul.NewRunner(script, dp, int(p.GetPacketSize()), dur, p.GetCount(), p.GetVolume(), p.GetSeed())
+	id, err := s.mgr.configure(runner, dp, 0)
+	if err != nil {
+		_ = dp.Close()
 		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
 	}
 	return &loomv1.ConfigureResponse{FlowId: id}, nil
