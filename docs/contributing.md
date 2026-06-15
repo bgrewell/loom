@@ -83,6 +83,31 @@ Follow the wire-evolution discipline ([ADR-0021](https://github.com/bgrewell/loo
 field number, `reserved` removed fields, use enums for closed sets, and bump
 `control.APIVersion` on a breaking change.
 
+## Releasing
+
+Releases are **tag-driven**: pushing a `vX.Y.Z` tag runs GoReleaser
+([`.github/workflows/release.yml`](https://github.com/bgrewell/loom/blob/main/.github/workflows/release.yml)),
+which builds the linux amd64/arm64 binaries, publishes a GitHub release, and
+produces the `loom_<version>_linux_<arch>.tar.gz` assets that
+[`scripts/install.sh`](https://github.com/bgrewell/loom/blob/main/scripts/install.sh)
+downloads. The version is injected into the binaries from the tag via ldflags.
+
+Cut a release whenever code changes land on `main`, following semver:
+
+- **patch** (`v0.2.0 → v0.2.1`) — bug fixes and small tweaks.
+- **minor** (`v0.2.x → v0.3.0`) — new features (and, while pre-1.0, anything
+  worth surfacing). Bump `control.APIVersion` and go minor on a breaking
+  control-plane change until 1.0.
+- Docs-only changes need no release (the binaries don't change).
+
+```console
+git tag -a v0.3.0 -m v0.3.0
+git push origin v0.3.0     # CI builds + publishes the release
+```
+
+Installs track the **latest release**, so a merge that hasn't been released won't
+reach `curl | bash` users — keep releases close behind merges.
+
 ## Conventions
 
 - Exported symbols get GoDoc comments.
