@@ -334,6 +334,31 @@ func (s *Server) Destroy(_ context.Context, req *loomv1.DestroyRequest) (*loomv1
 	return &loomv1.DestroyResponse{}, nil
 }
 
+// rateTracker computes per-interval throughput (bits/sec) from a monotonically
+// increasing byte counter. Seed it with the counter's value at the moment
+// measurement begins so the first interval measures only bytes seen after that
+// instant — not everything that accumulated before the stream was opened.
+type rateTracker struct {
+	lastBytes uint64
+	lastTime  time.Time
+}
+
+func newRateTracker(bytes uint64, now time.Time) *rateTracker {
+	return &rateTracker{lastBytes: bytes, lastTime: now}
+}
+
+// bitsPerSec returns the throughput since the previous call (or since seeding),
+// then advances the baseline. A counter that went backwards (shouldn't happen)
+// or a non-positive interval yields 0 rather than a bogus/negative rate.
+func (r *rateTracker) bitsPerSec(bytes uint64, now time.Time) float64 {
+	var bps float64
+	if d := now.Sub(r.lastTime).Seconds(); d > 0 && bytes >= r.lastBytes {
+		bps = float64(bytes-r.lastBytes) * 8 / d
+	}
+	r.lastBytes, r.lastTime = bytes, now
+	return bps
+}
+
 // StreamTelemetry streams interval samples for a flow until the flow finishes or
 // the client disconnects, emitting a final sample on completion.
 func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Control_StreamTelemetryServer) error {
@@ -345,17 +370,17 @@ func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Con
 	ticker := time.NewTicker(s.telemetryInterval())
 	defer ticker.Stop()
 
-	last, lastT := uint64(0), time.Now()
+	// Seed the meter with the counter's current value, not 0: a flow is usually
+	// already running by the time a telemetry stream is opened, so a 0 baseline
+	// would charge every byte sent before this stream began to the first interval,
+	// inflating the first sample's rate (~2x). Seeding here aligns the byte and
+	// time baselines so the first rate measures only this interval.
+	meter := newRateTracker(c.Bytes(), time.Now())
 	send := func(now time.Time) error {
 		b, p := c.Bytes(), c.Packets()
-		var bps float64
-		if d := now.Sub(lastT).Seconds(); d > 0 {
-			bps = float64(b-last) * 8 / d
-		}
-		last, lastT = b, now
 		return stream.Send(&loomv1.TelemetrySample{
 			FlowId: req.GetFlowId(), Nanos: now.UnixNano(),
-			Bytes: b, Packets: p, BitsPerSec: bps,
+			Bytes: b, Packets: p, BitsPerSec: meter.bitsPerSec(b, now),
 		})
 	}
 
