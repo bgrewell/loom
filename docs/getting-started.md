@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/bgrewell/loom/main/scripts/install.
 
 That installs all three binaries (`loom`, `loomd`, `loomctl`) — prebuilt when
 available, else built from source. Options and the upgrade/uninstall counterparts
-are in [scripts/README.md](../scripts/README.md). Prefer the Go toolchain
+are in [scripts/README.md](https://github.com/bgrewell/loom/blob/main/scripts/README.md). Prefer the Go toolchain
 directly?
 
 ```console

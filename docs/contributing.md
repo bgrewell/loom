@@ -72,22 +72,22 @@ The same pattern applies to `generator.Registry`, `scheduler.Registry`, and
 
 ## Changing the wire (proto)
 
-The control plane is defined in [`proto/loom/v1/control.proto`](../proto/loom/v1/control.proto).
+The control plane is defined in [`proto/loom/v1/control.proto`](https://github.com/bgrewell/loom/blob/main/proto/loom/v1/control.proto).
 Regenerate the Go after editing:
 
 ```console
 bash scripts/gen-proto.sh        # needs protoc + protoc-gen-go[-grpc]
 ```
 
-Follow the wire-evolution discipline ([ADR-0021](../DECISIONS.md)): never reuse a
+Follow the wire-evolution discipline ([ADR-0021](https://github.com/bgrewell/loom/blob/main/DECISIONS.md)): never reuse a
 field number, `reserved` removed fields, use enums for closed sets, and bump
 `control.APIVersion` on a breaking change.
 
 ## Conventions
 
 - Exported symbols get GoDoc comments.
-- New decisions are recorded as ADRs in [DECISIONS.md](../DECISIONS.md); design
-  changes are reflected in [DESIGN.md](../DESIGN.md); scope lives in the
+- New decisions are recorded as ADRs in [DECISIONS.md](https://github.com/bgrewell/loom/blob/main/DECISIONS.md); design
+  changes are reflected in [DESIGN.md](https://github.com/bgrewell/loom/blob/main/DESIGN.md); scope lives in the
   [roadmap](roadmap.md).
 - Keep changes scoped; the hot-path invariants (0-alloc, non-blocking logging)
   are not negotiable.

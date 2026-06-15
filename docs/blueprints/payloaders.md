@@ -41,9 +41,9 @@ type Payloader interface { Read(p []byte) (int, error) } // io.Reader
 ## loom adaptation
 
 - Implement as registry-registered payload sources used by `Generator`s
-  ([DESIGN §5.3](../../DESIGN.md#53-generator--what-the-traffic-is)).
+  ([DESIGN §5.3](https://github.com/bgrewell/loom/blob/main/DESIGN.md#53-generator--what-the-traffic-is)).
 - Preallocate + ring-read so `NextPayload` is **allocation-free** on the hot path
-  ([DESIGN §6](../../DESIGN.md#6-decoupled-logging--telemetry-hard-constraint)).
+  ([DESIGN §6](https://github.com/bgrewell/loom/blob/main/DESIGN.md#6-decoupled-logging--telemetry-hard-constraint)).
 - Keep the patterned generator's seq framing as the standard for in-band
   loss/reorder/dup detection.
 - De Bruijn payload is an opt-in diagnostic mode.

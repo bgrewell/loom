@@ -29,7 +29,7 @@ cluster are **out of scope and left untouched** — not harvested, not archived.
 Three artifact types, all living in loom so they outlive the source repos:
 
 - **Harvest map** — the index of *component → source repo → action*. Already in
-  [DESIGN.md Appendix A](../DESIGN.md#appendix-a--harvest-map).
+  [DESIGN.md Appendix A](https://github.com/bgrewell/loom/blob/main/DESIGN.md#appendix-a--harvest-map).
 - **Blueprints** (`docs/blueprints/<topic>.md`) — one per harvested capability:
   the idea, the distilled core (snippet/pseudocode), why it's good, the pitfalls
   to avoid, how loom adapts it, and attribution/license. Template and index in

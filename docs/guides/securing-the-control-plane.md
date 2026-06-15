@@ -55,7 +55,7 @@ Even authenticated, an agent protects itself from a buggy or hostile controller:
 ## What's coming
 
 The current model is the "simple shared token" half of the security design
-([ADR-0014](../../DECISIONS.md)). Still to come: **mTLS** for transport encryption
+([ADR-0014](https://github.com/bgrewell/loom/blob/main/DECISIONS.md)). Still to come: **mTLS** for transport encryption
 and per-agent identity, and a **fleet enrollment** flow for standing up many
 agents across a datacenter. Until those land, run exposed agents on trusted
 management networks and treat the token as a secret (distribute it with your

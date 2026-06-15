@@ -1,7 +1,7 @@
 # CI/CD (draft)
 
 Pipeline and runner topology. Behind
-[DESIGN.md §15](../DESIGN.md#15-testing-cicd--performance-regression). Principle:
+[DESIGN.md §15](https://github.com/bgrewell/loom/blob/main/DESIGN.md#15-testing-cicd--performance-regression). Principle:
 **the gate that protects `main` runs from the first commit.**
 
 ## Runners

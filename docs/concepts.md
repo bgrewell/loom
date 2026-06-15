@@ -45,9 +45,9 @@ volume — whichever comes first. No stop condition means "run until told to sto
 
 > **For experts.** Each part is a small interface resolved from a registry, so a
 > new scheduler/payload/datapath drops in without touching the pump
-> ([ADR-0006](../DECISIONS.md)). The datapath interface is split into transmit
+> ([ADR-0006](https://github.com/bgrewell/loom/blob/main/DECISIONS.md)). The datapath interface is split into transmit
 > (`TxDatapath`) and receive (`RxDatapath`) sides and is batch- and zero-copy-
-> capable so AF_XDP/DPDK slot in unchanged ([ADR-0019/0020](../DECISIONS.md)).
+> capable so AF_XDP/DPDK slot in unchanged ([ADR-0019/0020](https://github.com/bgrewell/loom/blob/main/DECISIONS.md)).
 
 ## Datapaths, briefly
 

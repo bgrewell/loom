@@ -46,7 +46,7 @@ Build clean: **atomic counters** (sharded per worker), a **`time.Ticker`**, and 
 
 - Per-flow and aggregate accounting; `Add` is a single atomic, **zero alloc**.
 - Sampler runs off-path; current/avg/peak exposed to the
-  [Reporter](../../DESIGN.md#7-measurement-plane) and the telemetry stream.
+  [Reporter](https://github.com/bgrewell/loom/blob/main/DESIGN.md#7-measurement-plane) and the telemetry stream.
 - Pair with the patterned [payloader](payloaders.md) so loss/dup are accounted
   alongside throughput.
 

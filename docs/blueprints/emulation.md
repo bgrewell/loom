@@ -13,7 +13,7 @@ ssh-session, prometheus-sender, ftp-transfer) by compiling each to a shared
 **behavior-script primitive** — a sequence of
 `(direction, size-dist, think-time-dist, transport)` steps — so they share one
 engine instead of each being bespoke
-([DESIGN §10](../../DESIGN.md#10-traffic-emulation)).
+([DESIGN §10](https://github.com/bgrewell/loom/blob/main/DESIGN.md#10-traffic-emulation)).
 
 ## Distilled core
 
@@ -40,7 +40,7 @@ type BehaviorScript []Step   // an Emulation compiles to one of these
 - One primitive → all emulations share machinery; a new app = a new script, not a
   new transport.
 - The behavior-script maps cleanly onto loom's `Generator`
-  ([DESIGN §5.3](../../DESIGN.md#53-generator--what-the-traffic-is)) and the
+  ([DESIGN §5.3](https://github.com/bgrewell/loom/blob/main/DESIGN.md#53-generator--what-the-traffic-is)) and the
   [scenario `flow.kind`](../scenario-schema.md) params.
 
 ## Pitfalls observed

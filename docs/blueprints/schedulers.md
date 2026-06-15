@@ -8,7 +8,7 @@ loader `scheduler/bitrate/bitrate.go:47-67`, `core/converters.go:10-62`
 ## Idea
 
 A **Scheduler** decides *when* the next packet is sent within a flow — the
-intra-flow pacing loom's [DESIGN §5.2](../../DESIGN.md#52-scheduler--intra-flow-pacing--rate-control)
+intra-flow pacing loom's [DESIGN §5.2](https://github.com/bgrewell/loom/blob/main/DESIGN.md#52-scheduler--intra-flow-pacing--rate-control)
 calls for, and the exact piece `traffic` left as an empty interface. blaster has
 three working strategies behind one clean interface; loader contributes a real
 bitrate→packets/sec calculation and human rate-string parsing.
@@ -34,7 +34,7 @@ type Scheduler interface {
 ## Why it's good
 
 - One small interface, multiple strategies — the registry-friendly shape loom
-  wants ([DESIGN §5](../../DESIGN.md#5-data-plane)).
+  wants ([DESIGN §5](https://github.com/bgrewell/loom/blob/main/DESIGN.md#5-data-plane)).
 - blaster's strategies actually run; loader's bitrate math is the only working
   rate-control across all the audited repos.
 - Maps 1:1 onto loom's `Scheduler` seam — minimal translation.
@@ -56,9 +56,9 @@ type Scheduler interface {
 ## loom adaptation
 
 - Implement each strategy as a registry-registered `Scheduler`
-  ([DESIGN §5](../../DESIGN.md#5-data-plane)); add `poisson`/`bursty`/`replay`.
+  ([DESIGN §5](https://github.com/bgrewell/loom/blob/main/DESIGN.md#5-data-plane)); add `poisson`/`bursty`/`replay`.
 - `Pace` must be **allocation-free** on the hot path, use the monotonic clock,
-  and run on a pinned pump goroutine ([DESIGN §6](../../DESIGN.md#6-decoupled-logging--telemetry-hard-constraint)).
+  and run on a pinned pump goroutine ([DESIGN §6](https://github.com/bgrewell/loom/blob/main/DESIGN.md#6-decoupled-logging--telemetry-hard-constraint)).
 - Rate strings reuse `go-conversions` rather than re-porting loader's converters.
 - Covered by the `SchedulerContract` conformance suite
   ([testing §Tier 2](../testing.md#tier-2--contract--conformance)): honors rate

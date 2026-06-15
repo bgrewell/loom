@@ -2,7 +2,7 @@
 
 From the phase-1 scaffold to feature-complete. **Phases are milestones**; each has
 a demoable Definition of Done and a task breakdown (→ GitHub issues). Tracks the
-hard requirements in [DESIGN.md §2](../DESIGN.md#2-hard-requirements) and the
+hard requirements in [DESIGN.md §2](https://github.com/bgrewell/loom/blob/main/DESIGN.md#2-hard-requirements) and the
 [blueprints](blueprints/).
 
 ## Current state
@@ -69,8 +69,8 @@ available; a web dashboard shows live flow state.
       channel) so request/response sizes are real, not just client-shape
 - [x] **Batch-first datapath interface** + per-packet RX metadata — done; the
       seam is ready for a native AF_XDP backend with no interface change
-      ([ADR-0019](../DECISIONS.md#adr-0019--batch-first-datapath-interface),
-      [ADR-0020](../DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier))
+      ([ADR-0019](https://github.com/bgrewell/loom/blob/main/DECISIONS.md#adr-0019--batch-first-datapath-interface),
+      [ADR-0020](https://github.com/bgrewell/loom/blob/main/DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier))
 - [ ] **AF_PACKET datapath**
 - [x] **AF_XDP datapath** (TX + RX, zero-copy over UMEM) + RawL2 capability —
       build-tagged `afxdp`, veth-validated, **wired end to end**: `datapath: afxdp`
@@ -79,8 +79,8 @@ available; a web dashboard shows live flow state.
       emitting valid L2/L3/L4 headers for real NICs (raw bytes work over veth)
 - [ ] **Reporter sinks** — file/json, prometheus, socket
 - [x] **Wire/proto discipline** — reserved ranges, FlowRole enum, api_version
-      handshake, protobuf.Duration ([ADR-0021](../DECISIONS.md#adr-0021--wireproto-evolution-discipline)); auth rides call metadata (ADR-0014)
-- [x] **Component DI + functional-option constructors** ([ADR-0022](../DECISIONS.md#adr-0022--inject-component-registries-functional-options-on-constructors)) — `core/components`, `flow.Build(spec, *Components)`, `control.NewServer(…Option)`, `controller.WithDialer`
+      handshake, protobuf.Duration ([ADR-0021](https://github.com/bgrewell/loom/blob/main/DECISIONS.md#adr-0021--wireproto-evolution-discipline)); auth rides call metadata (ADR-0014)
+- [x] **Component DI + functional-option constructors** ([ADR-0022](https://github.com/bgrewell/loom/blob/main/DECISIONS.md#adr-0022--inject-component-registries-functional-options-on-constructors)) — `core/components`, `flow.Build(spec, *Components)`, `control.NewServer(…Option)`, `controller.WithDialer`
 - [ ] **Web dashboard** + REST/gRPC-gateway API
 - [x] **Optional security** — shared auth token (ADR-0014): `LOOMD_TOKEN` on the
       agent, `--token`/`$LOOM_TOKEN` on loomctl; loomd defaults to loopback and
@@ -110,7 +110,7 @@ on the physical testbed; release-ready.
 
 - Tests land **with** code — unit + contract + DART; the §6 decoupled-logging
   invariant stays a benchmark gate.
-- Decisions recorded in [DECISIONS.md](../DECISIONS.md); design changes reflected
-  in [DESIGN.md](../DESIGN.md).
+- Decisions recorded in [DECISIONS.md](https://github.com/bgrewell/loom/blob/main/DECISIONS.md); design changes reflected
+  in [DESIGN.md](https://github.com/bgrewell/loom/blob/main/DESIGN.md).
 - Issues for a phase are created as that phase is started; this doc is the source
   of truth for scope.

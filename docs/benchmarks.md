@@ -3,7 +3,7 @@
 How to run loom's microbenchmarks and the baseline numbers we track. These are
 **single-core, single-flow** Go benchmarks for tracking relative performance and
 catching regressions (with `benchstat`); they are not line-rate claims. Real
-NIC numbers come from the physical testbed (Tier 5, [ADR-0016](../DECISIONS.md)).
+NIC numbers come from the physical testbed (Tier 5, [ADR-0016](https://github.com/bgrewell/loom/blob/main/DECISIONS.md)).
 
 ## Engine hot loop (no datapath)
 
@@ -12,7 +12,7 @@ go test -bench BenchmarkPumpStep -benchmem ./core/pump/
 ```
 
 The pump's generate → pace → send → account loop over the discard sink. Gated to
-**0 allocs/op** (the [DESIGN §6](../DESIGN.md) decoupled-logging invariant); the
+**0 allocs/op** (the [DESIGN §6](https://github.com/bgrewell/loom/blob/main/DESIGN.md) decoupled-logging invariant); the
 "with logging" variant must stay 0-alloc too.
 
 ## Datapath throughput

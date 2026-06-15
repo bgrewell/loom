@@ -6,18 +6,41 @@ application behaviors — across many machines, on a schedule you define, and
 measures what happens in real time.
 
 Think of it as *iperf when you want a quick number, and a programmable traffic
-fabric when you don't*: one command for a point-to-point throughput test, or a
+fabric when you don't*: a measured client→server throughput test, or a
 declarative scenario driving dozens of agents with overlapping, randomized flows.
+
+**Measure throughput between two hosts (the iperf-style test).** Run an agent on
+each host, then drive a flow between them from anywhere — both sides are measured:
+
+```console
+# on the server host and the client host: run the agent
+$ LOOMD_ADDR=:9551 loomd
+
+# from your workstation: drive a 1 Gbps UDP flow client → server for 10s
+$ cat > test.yaml <<'EOF'
+scenario: quick-test
+endpoints: [ { name: client }, { name: server } ]
+timeline:
+  - name: blast
+    flow: { kind: udp, rate: 1Gbps, packet_size: 1400 }
+    from: client
+    to: server
+    start: 0s
+    stop: { after: 10s }
+EOF
+$ loomctl run -f test.yaml -a 'client=10.0.0.1:9551,server=10.0.0.2:9551'
+[14:03:01] tx 0.99 Gbps  rx 0.99 Gbps  (2 flows)
+...
+done: placed 2 flows
+```
+
+**Or a quick one-host check** — generate, pace, and measure a flow locally with
+no receiver (the `discard` datapath drops after accounting):
 
 ```console
 $ loom run --rate 50Mbps --duration 5s
-[   1.0s]   49.98 Mbps      4459 pkts     5.95 MB
-[   2.0s]   50.01 Mbps      4461 pkts     5.95 MB
-...
---- summary ---
-  duration : 5s
-  sent     : 29.7 MB in 22300 packets
-  avg rate : 49.9 Mbps
+[   1.0s]   49.98 Mbps   4459 pkts   5.95 MB
+--- summary ---  sent 29.7 MB in 22300 packets, avg 49.9 Mbps
 ```
 
 ## Why loom
