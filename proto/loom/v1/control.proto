@@ -123,7 +123,14 @@ message ConfigureResponse {
 
 message ArmRequest { string flow_id = 1; }
 message ArmResponse {}
-message StartRequest { string flow_id = 1; }
+message StartRequest {
+  string flow_id = 1;
+  // start_at_unix_nanos schedules the flow to begin at an absolute time on the
+  // agent's own clock (the controller translates a shared target time into each
+  // agent's clock using the TimeSync offset, so flows on different hosts begin in
+  // lockstep regardless of link latency). 0 (or a past time) starts immediately.
+  int64 start_at_unix_nanos = 2;
+}
 message StartResponse {}
 message StopRequest { string flow_id = 1; }
 message StopResponse {}
