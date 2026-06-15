@@ -21,6 +21,11 @@ enum FlowRole {
   FLOW_ROLE_SENDER = 1;
   FLOW_ROLE_RECEIVER = 2;  // binds an ephemeral port and drains+accounts inbound
   FLOW_ROLE_REFLECTOR = 3; // echoes received packets (not yet implemented)
+  // Request/response pair for emulations that need real bidirectional traffic
+  // (e.g. https-browse): the responder binds an ephemeral port and serves the
+  // bytes a requester asks for; the requester drives the behavior script.
+  FLOW_ROLE_RESPONDER = 4; // binds an ephemeral port, serves requested bytes
+  FLOW_ROLE_REQUESTER = 5; // drives a script, requesting objects from a responder
 }
 
 // Control is the controller <-> agent control plane (DESIGN.md §8). It carries
@@ -94,6 +99,10 @@ message FlowSpec {
   uint64 volume = 12; // bytes
   map<string, string> params = 13; // emulation parameters
   int64 seed = 14;                 // RNG seed for reproducible emulated shapes
+  // transport carries request/response emulations (FLOW_ROLE_REQUESTER /
+  // FLOW_ROLE_RESPONDER): "tcp" or "udp". Ignored by other roles, which use the
+  // datapath field instead.
+  string transport = 15;
 
   // role selects sender vs receiver (and, later, reflector). A receiver binds an
   // ephemeral UDP port returned as ConfigureResponse.data_port and

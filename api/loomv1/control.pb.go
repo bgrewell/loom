@@ -34,6 +34,11 @@ const (
 	FlowRole_FLOW_ROLE_SENDER      FlowRole = 1
 	FlowRole_FLOW_ROLE_RECEIVER    FlowRole = 2 // binds an ephemeral port and drains+accounts inbound
 	FlowRole_FLOW_ROLE_REFLECTOR   FlowRole = 3 // echoes received packets (not yet implemented)
+	// Request/response pair for emulations that need real bidirectional traffic
+	// (e.g. https-browse): the responder binds an ephemeral port and serves the
+	// bytes a requester asks for; the requester drives the behavior script.
+	FlowRole_FLOW_ROLE_RESPONDER FlowRole = 4 // binds an ephemeral port, serves requested bytes
+	FlowRole_FLOW_ROLE_REQUESTER FlowRole = 5 // drives a script, requesting objects from a responder
 )
 
 // Enum value maps for FlowRole.
@@ -43,12 +48,16 @@ var (
 		1: "FLOW_ROLE_SENDER",
 		2: "FLOW_ROLE_RECEIVER",
 		3: "FLOW_ROLE_REFLECTOR",
+		4: "FLOW_ROLE_RESPONDER",
+		5: "FLOW_ROLE_REQUESTER",
 	}
 	FlowRole_value = map[string]int32{
 		"FLOW_ROLE_UNSPECIFIED": 0,
 		"FLOW_ROLE_SENDER":      1,
 		"FLOW_ROLE_RECEIVER":    2,
 		"FLOW_ROLE_REFLECTOR":   3,
+		"FLOW_ROLE_RESPONDER":   4,
+		"FLOW_ROLE_REQUESTER":   5,
 	}
 )
 
@@ -419,6 +428,10 @@ type FlowSpec struct {
 	Volume   uint64               `protobuf:"varint,12,opt,name=volume,proto3" json:"volume,omitempty"`                                                                          // bytes
 	Params   map[string]string    `protobuf:"bytes,13,rep,name=params,proto3" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // emulation parameters
 	Seed     int64                `protobuf:"varint,14,opt,name=seed,proto3" json:"seed,omitempty"`                                                                              // RNG seed for reproducible emulated shapes
+	// transport carries request/response emulations (FLOW_ROLE_REQUESTER /
+	// FLOW_ROLE_RESPONDER): "tcp" or "udp". Ignored by other roles, which use the
+	// datapath field instead.
+	Transport string `protobuf:"bytes,15,opt,name=transport,proto3" json:"transport,omitempty"`
 	// role selects sender vs receiver (and, later, reflector). A receiver binds an
 	// ephemeral UDP port returned as ConfigureResponse.data_port and
 	// drains+accounts inbound packets instead of generating.
@@ -553,6 +566,13 @@ func (x *FlowSpec) GetSeed() int64 {
 		return x.Seed
 	}
 	return 0
+}
+
+func (x *FlowSpec) GetTransport() string {
+	if x != nil {
+		return x.Transport
+	}
+	return ""
 }
 
 func (x *FlowSpec) GetRole() FlowRole {
@@ -1233,7 +1253,7 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"schedulers\x18\x03 \x03(\tR\n" +
 	"schedulers\x12\x1a\n" +
 	"\bpayloads\x18\x04 \x03(\tR\bpayloads\x12/\n" +
-	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\x95\x04\n" +
+	"\x13hardware_timestamps\x18\x05 \x01(\bR\x12hardwareTimestamps\"\xb3\x04\n" +
 	"\bFlowSpec\x12\x1c\n" +
 	"\tgenerator\x18\x01 \x01(\tR\tgenerator\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\tR\apayload\x12\x1a\n" +
@@ -1250,7 +1270,8 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x05count\x18\v \x01(\x04R\x05count\x12\x16\n" +
 	"\x06volume\x18\f \x01(\x04R\x06volume\x125\n" +
 	"\x06params\x18\r \x03(\v2\x1d.loom.v1.FlowSpec.ParamsEntryR\x06params\x12\x12\n" +
-	"\x04seed\x18\x0e \x01(\x03R\x04seed\x12%\n" +
+	"\x04seed\x18\x0e \x01(\x03R\x04seed\x12\x1c\n" +
+	"\ttransport\x18\x0f \x01(\tR\ttransport\x12%\n" +
 	"\x04role\x18\x15 \x01(\x0e2\x11.loom.v1.FlowRoleR\x04role\x1a9\n" +
 	"\vParamsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
@@ -1287,12 +1308,14 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\x12\x18\n" +
 	"\apackets\x18\x04 \x01(\x04R\apackets\x12 \n" +
 	"\fbits_per_sec\x18\x05 \x01(\x01R\n" +
-	"bitsPerSec*l\n" +
+	"bitsPerSec*\x9e\x01\n" +
 	"\bFlowRole\x12\x19\n" +
 	"\x15FLOW_ROLE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10FLOW_ROLE_SENDER\x10\x01\x12\x16\n" +
 	"\x12FLOW_ROLE_RECEIVER\x10\x02\x12\x17\n" +
-	"\x13FLOW_ROLE_REFLECTOR\x10\x032\xfe\x04\n" +
+	"\x13FLOW_ROLE_REFLECTOR\x10\x03\x12\x17\n" +
+	"\x13FLOW_ROLE_RESPONDER\x10\x04\x12\x17\n" +
+	"\x13FLOW_ROLE_REQUESTER\x10\x052\xfe\x04\n" +
 	"\aControl\x129\n" +
 	"\x06Health\x12\x16.loom.v1.HealthRequest\x1a\x17.loom.v1.HealthResponse\x12?\n" +
 	"\bRegister\x12\x18.loom.v1.RegisterRequest\x1a\x19.loom.v1.RegisterResponse\x12K\n" +

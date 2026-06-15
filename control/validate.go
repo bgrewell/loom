@@ -30,6 +30,14 @@ func validatePacketSize(n uint32) error {
 	return nil
 }
 
+// validateTransport rejects a request/response transport that is not tcp or udp.
+func validateTransport(t string) error {
+	if t != "tcp" && t != "udp" {
+		return fmt.Errorf("transport %q must be tcp or udp", t)
+	}
+	return nil
+}
+
 // validateTarget checks that a non-empty flow target parses as host:port with a
 // valid port. An empty target is allowed (datapaths that need no peer, e.g.
 // discard/memory). This is the format-validation seam; an SSRF/reflection

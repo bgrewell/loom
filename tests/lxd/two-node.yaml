@@ -1,10 +1,11 @@
 suite: loom two-node LXD
 
 # Multi-node correctness on LXD containers (docs/testing.md Tier 4). Two
-# containers each run a loomd agent; loomctl runs on the host and drives a
-# scenario across them — placing a UDP receiver on one and a sender on the other,
-# then aggregating live telemetry. Asserts both flows were placed and the
-# receiver actually accounted for traffic on the wire.
+# containers each run a loomd agent; loomctl runs on the host and drives two
+# scenarios across them: (1) a push UDP flow — receiver on one agent, sender on
+# the other; and (2) an https-browse request/response flow — responder on one
+# agent, requester on the other — which validates cross-host responder reach.
+# Each asserts both flows were placed and bytes actually crossed the wire.
 #
 # Topology: agents get DHCP addresses on the default LXD bridge (lxdbr0); the
 # host reaches their control planes and the sender reaches the receiver over the
@@ -43,6 +44,7 @@ setup:
           CGO_ENABLED=0 go build -o "$BIN/loomd" ./cmd/loomd
           CGO_ENABLED=0 go build -o "$BIN/loomctl" ./cmd/loomctl
           cp tests/lxd/two-node.scenario.yaml "$BIN/scenario.yaml"
+          cp tests/lxd/two-node-reqresp.scenario.yaml "$BIN/reqresp.yaml"
 
   - name: push loomd into the agent containers
     node: local
@@ -93,6 +95,27 @@ tests:
         echo "$out" | grep -oE '"rx_bytes":[0-9]+' | grep -qvE '"rx_bytes":0$' && echo "RX_NONZERO"
       evaluate:
         contains: "RX_NONZERO"
+
+  - name: controller drives an https-browse request/response flow and the requester downloads
+    node: local
+    type: execute
+    options:
+      command: |
+        set -uo pipefail
+        ip() { lxc list "$1" --project default -f csv -c 4 | awk 'NF{print $1; exit}'; }
+        SIP="$(ip server)"; CIP="$(ip client)"
+        echo "server=$SIP client=$CIP"
+        out="$(/tmp/loom-lxd/bin/loomctl run \
+          -f /tmp/loom-lxd/bin/reqresp.yaml \
+          -a "client=$CIP:9551,server=$SIP:9551" \
+          --horizon 8s --interval 500ms --output json 2>&1)"
+        echo "$out"
+        echo "$out" | grep -q "placed 2 flows" && echo "PLACED_OK"
+        # The requester (download receiver) is the Rx side; a non-zero rx_bytes
+        # proves the responder served objects across the bridge.
+        echo "$out" | grep -oE '"rx_bytes":[0-9]+' | grep -qvE '"rx_bytes":0$' && echo "REQRESP_RX_NONZERO"
+      evaluate:
+        contains: "REQRESP_RX_NONZERO"
 
 teardown:
   - name: cleanup host build dir

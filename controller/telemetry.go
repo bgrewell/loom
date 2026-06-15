@@ -189,7 +189,7 @@ func (t *Telemetry) emit(now time.Time) {
 	agg := Aggregate{At: now, Flows: make([]FlowSample, 0, len(t.latest))}
 	for _, fs := range t.latest {
 		agg.Flows = append(agg.Flows, fs)
-		if fs.Role == Receiver {
+		if fs.Role == Receiver || fs.Role == Requester {
 			agg.RxBitsPerSec += fs.BitsPerSec
 			agg.RxBytes += fs.Bytes
 		} else {
