@@ -1,0 +1,75 @@
+# GoReleaser config — cuts loom releases on a `vX.Y.Z` tag (see
+# .github/workflows/release.yml). Validate with `goreleaser check`.
+version: 2
+
+project_name: loom
+
+builds:
+  - id: loom
+    main: ./cmd/loom
+    binary: loom
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: &ldflags
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.buildDate={{ .Date }}
+      - -X main.branch={{ .Branch }}
+  - id: loomd
+    main: ./cmd/loomd
+    binary: loomd
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+  - id: loomctl
+    main: ./cmd/loomctl
+    binary: loomctl
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+
+# One tar.gz per OS/arch containing all three binaries at the archive root —
+# the layout scripts/install.sh expects (loom_<version>_linux_<arch>.tar.gz).
+archives:
+  - id: loom
+    formats: [tar.gz]
+    name_template: "loom_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: false
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "merge conflict"
+
+release:
+  github:
+    owner: bgrewell
+    name: loom
+  draft: false
+  prerelease: auto
+  name_template: "loom {{ .Tag }}"
+  footer: |
+    ---
+    Install: `curl -fsSL https://raw.githubusercontent.com/bgrewell/loom/main/scripts/install.sh | bash`

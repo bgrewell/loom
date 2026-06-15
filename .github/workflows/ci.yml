@@ -18,6 +18,20 @@ jobs:
       - name: test
         run: go test -race ./...
 
+  # Validate the GoReleaser config so a broken release surfaces here, not at tag
+  # time. `check` doesn't build, so it's cheap.
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
+
   integration-dart:
     runs-on: ubuntu-latest
     steps:

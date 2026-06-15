@@ -49,10 +49,9 @@ config, systemd units, and data in place.
 
 ## Notes
 
-- The `curl | bash` URLs above require the repository (or its releases) to be
-  reachable. While the repo is private, fetch the scripts with an authenticated
-  client, or run them from a checkout (`bash scripts/install.sh`).
-- Building from source against a private module needs Git auth and
-  `GOPRIVATE=github.com/bgrewell/*`.
+- Releases are cut by [GoReleaser](../.goreleaser.yaml) on each `vX.Y.Z` tag
+  (`.github/workflows/release.yml`), publishing the
+  `loom_<version>_linux_<arch>.tar.gz` assets `install.sh` downloads. Before the
+  first release, `install.sh` builds from source (needs Go).
 - Running `loomd` as a service (systemd, container) is covered in
   [docs/deployment.md](../docs/deployment.md).

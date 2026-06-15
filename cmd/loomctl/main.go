@@ -19,13 +19,24 @@ import (
 	"github.com/bgrewell/stencil"
 )
 
-var version = "dev"
+// Build metadata, injected at link time via -ldflags (see .goreleaser.yaml).
+var (
+	version   = "dev"
+	buildDate = "unknown"
+	commit    = "none"
+	branch    = "none"
+)
 
 func main() {
 	app := stencil.NewApp(
 		stencil.WithName("loomctl"),
 		stencil.WithDescription("loom controller — run a scenario across agents"),
-		stencil.WithVersionInfo(stencil.VersionInfo{Version: version}),
+		stencil.WithVersionInfo(stencil.VersionInfo{
+			Version:    version,
+			BuildDate:  buildDate,
+			CommitHash: commit,
+			Branch:     branch,
+		}),
 	)
 	app.Root.Sub = append(app.Root.Sub, runCommand())
 	os.Exit(app.Execute(os.Args[1:]))
