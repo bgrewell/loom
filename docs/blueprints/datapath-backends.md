@@ -7,7 +7,7 @@
 
 ## Idea
 
-The packet-I/O abstraction loom's [DESIGN §5.1](../../DESIGN.md#51-datapath--the-packet-io-backend-driverfirmware-layer)
+The packet-I/O abstraction loom's [DESIGN §5.1](https://github.com/bgrewell/loom/blob/main/DESIGN.md#51-datapath--the-packet-io-backend-driverfirmware-layer)
 calls the **datapath**, with swappable backends. `packet` is the only audited repo
 built as a proper *library* (interfaces, DI, `internal/` layout, gopacket-native)
 — the right base to grow from.

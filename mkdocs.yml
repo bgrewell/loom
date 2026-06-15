@@ -1,0 +1,64 @@
+site_name: loom
+site_description: Distributed network traffic generation & measurement for Linux
+site_url: https://bgrewell.github.io/loom/
+repo_url: https://github.com/bgrewell/loom
+repo_name: bgrewell/loom
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle: { icon: material/weather-night, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle: { icon: material/weather-sunny, name: Switch to light mode }
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
+
+nav:
+  - Home: README.md
+  - Getting Started: getting-started.md
+  - Core Concepts: concepts.md
+  - Guides:
+      - Overview: guides/README.md
+      - Multi-agent scenario: guides/multi-agent-scenario.md
+      - Application emulations: guides/emulations.md
+      - Choosing a datapath: guides/datapaths.md
+      - Securing the control plane: guides/securing-the-control-plane.md
+  - Architecture: architecture.md
+  - Deployment: deployment.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Scenario schema: scenario-schema.md
+      - Performance: benchmarks.md
+  - Contributing: contributing.md
+  - Project:
+      - Roadmap: roadmap.md
+      - Testing: testing.md
+      - CI / CD: ci-cd.md
+      - Design notes: blueprints/README.md
+
+validation:
+  nav:
+    omitted_files: ignore
+  links:
+    not_found: warn
+    anchors: warn

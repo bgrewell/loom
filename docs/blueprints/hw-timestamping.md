@@ -44,7 +44,7 @@ The kernel constants Go's stdlib doesn't export are transcribed in
 ## loom adaptation
 
 - A Go `hwts` package on `x/sys/unix`, wrapped behind a clean interface and a
-  **datapath capability flag** ([DESIGN §5.1](../../DESIGN.md#51-datapath--the-packet-io-backend-driverfirmware-layer)).
+  **datapath capability flag** ([DESIGN §5.1](https://github.com/bgrewell/loom/blob/main/DESIGN.md#51-datapath--the-packet-io-backend-driverfirmware-layer)).
 - OWD correlation layer built fresh on top of TimeSync/PHC.
 - Optional — only engaged when a scenario requests one-way delay.
 

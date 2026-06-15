@@ -40,8 +40,8 @@ can read as far as you need and stop.
 
 ## Deeper background
 
-- **[DESIGN.md](../DESIGN.md)** — the full system design document.
-- **[DECISIONS.md](../DECISIONS.md)** — architecture decision records (ADRs).
+- **[DESIGN.md](https://github.com/bgrewell/loom/blob/main/DESIGN.md)** — the full system design document.
+- **[DECISIONS.md](https://github.com/bgrewell/loom/blob/main/DECISIONS.md)** — architecture decision records (ADRs).
 - **[Roadmap](roadmap.md)** — what's done and what's next.
 - **[blueprints/](blueprints/)** — forward-looking design notes for components
   still being built.

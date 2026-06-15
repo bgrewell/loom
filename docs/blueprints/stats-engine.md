@@ -41,7 +41,7 @@ ProfilePacket { seq, t1, t2, t3, t4 }   // carried in the flow's payload
   `os.Exit`, returns errors.
 - Drive sequence numbers from the patterned payloader; reflector becomes a
   `Generator`/role on the agent.
-- Output flows into the [Reporter](../../DESIGN.md#7-measurement-plane) (streaming
+- Output flows into the [Reporter](https://github.com/bgrewell/loom/blob/main/DESIGN.md#7-measurement-plane) (streaming
   + end-of-run). Feed both software and (optional) hardware timestamps in.
 
 ## Attribution / license

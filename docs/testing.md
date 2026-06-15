@@ -1,11 +1,11 @@
 # Testing strategy (draft)
 
 Tests are part of "done" from the first commit. This expands the tiers sketched
-in [DESIGN.md §15](../DESIGN.md#15-testing-cicd--performance-regression).
+in [DESIGN.md §15](https://github.com/bgrewell/loom/blob/main/DESIGN.md#15-testing-cicd--performance-regression).
 
 ## Testability is architectural
 
-The hexagonal core ([DESIGN §4](../DESIGN.md#4-architecture-overview)) makes
+The hexagonal core ([DESIGN §4](https://github.com/bgrewell/loom/blob/main/DESIGN.md#4-architecture-overview)) makes
 thorough testing cheap:
 
 - `Datapath` / `Scheduler` / `Generator` are interfaces → swap real ones for
@@ -29,7 +29,7 @@ thorough testing cheap:
 
 ## Tier 2 — Contract / conformance
 
-The registry ([DESIGN §5](../DESIGN.md#5-data-plane)) lets plugins drop in;
+The registry ([DESIGN §5](https://github.com/bgrewell/loom/blob/main/DESIGN.md#5-data-plane)) lets plugins drop in;
 contract tests stop them drifting.
 
 - One shared suite per interface — `DatapathContract`, `SchedulerContract`,
@@ -45,7 +45,7 @@ contract tests stop them drifting.
 
 - Microbenchmarks on the pump inner loop, payloaders, schedulers, accounting.
 - **Allocation gates**: assert `0 allocs/op` on the pump hot path
-  ([DESIGN §6](../DESIGN.md#6-decoupled-logging--telemetry-hard-constraint)). An
+  ([DESIGN §6](https://github.com/bgrewell/loom/blob/main/DESIGN.md#6-decoupled-logging--telemetry-hard-constraint)). An
   allocation creeping into the inner loop is a build failure, not a review nit.
 - **`benchstat` regression**: CI benchmarks the PR and the base commit and flags
   statistically significant slowdowns.

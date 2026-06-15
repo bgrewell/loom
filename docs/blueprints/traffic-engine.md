@@ -31,7 +31,7 @@ events off wall-clock offsets.
 ## Why it's good
 
 - One clean lifecycle (`Setup/Start/Stop/Cleanup`) at every layer.
-- Symmetric daemon = loom's [agent](../../DESIGN.md#11-roles--topology) model.
+- Symmetric daemon = loom's [agent](https://github.com/bgrewell/loom/blob/main/DESIGN.md#11-roles--topology) model.
 - `{Type, Params}` is exactly loom's [scenario flow-kind](../scenario-schema.md)
   shape; the YAML selection language (`tags(all(...))`, `oneOf`) ports directly.
 
@@ -48,7 +48,7 @@ events off wall-clock offsets.
 ## loom adaptation
 
 - These three interfaces become loom's flow/generator/orchestration seams
-  ([DESIGN §5](../../DESIGN.md#5-data-plane), [§9](../../DESIGN.md#9-orchestration-scenarios--timeline)),
+  ([DESIGN §5](https://github.com/bgrewell/loom/blob/main/DESIGN.md#5-data-plane), [§9](https://github.com/bgrewell/loom/blob/main/DESIGN.md#9-orchestration-scenarios--timeline)),
   **registry-driven** not switch-driven.
 - Timeline orchestrator → loom's [Timeline engine](../scenario-schema.md) with
   real timers (no busy-wait) and the seed-reproducible selection.

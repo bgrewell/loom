@@ -9,7 +9,7 @@ bperf `control/{message_setup,message_flow}.go`, `client/tcp_client.go:36-81`,
 ## Idea
 
 The dedicated control channel between controller and agents
-([DESIGN §8](../../DESIGN.md#8-control-plane--security)). anapp gives the
+([DESIGN §8](https://github.com/bgrewell/loom/blob/main/DESIGN.md#8-control-plane--security)). anapp gives the
 **proto/state-machine shape**; bperf gives a **concrete negotiation handshake**
 with ephemeral data-port assignment.
 
@@ -50,13 +50,13 @@ client → ClientReady → traffic starts
 
 ## loom adaptation
 
-- loom's gRPC control service ([DESIGN §8](../../DESIGN.md#8-control-plane--security)):
+- loom's gRPC control service ([DESIGN §8](https://github.com/bgrewell/loom/blob/main/DESIGN.md#8-control-plane--security)):
   `Register / Capabilities / Configure / Arm / Start / Stop / Destroy /
   StreamTelemetry / Health / TimeSync` — i.e. anapp's lifecycle **plus** the
   telemetry readback it lacked.
 - Map `Protocol`/`TrafficDir`/`TrafficState`; reuse the ephemeral-port handshake.
 - No singleton; multi-flow; optional auth token + mTLS
-  ([ADR-0014](../../DECISIONS.md#adr-0014--simple-auth-not-rbac)).
+  ([ADR-0014](https://github.com/bgrewell/loom/blob/main/DECISIONS.md#adr-0014--simple-auth-not-rbac)).
 
 ## Attribution / license
 

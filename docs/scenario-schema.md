@@ -2,7 +2,7 @@
 
 The scenario file is how a user declares **what traffic runs, between which
 points, when, and for how long** — including overlap and randomized timing. This
-is the detailed grammar behind [DESIGN.md §9](../DESIGN.md#9-orchestration-scenarios--timeline).
+is the detailed grammar behind [DESIGN.md §9](https://github.com/bgrewell/loom/blob/main/DESIGN.md#9-orchestration-scenarios--timeline).
 
 > Draft for discussion. Field names, defaults, and the value grammar are all up
 > for debate — this is a riff surface, not a frozen spec.
@@ -121,7 +121,7 @@ flow: { kind: icmp, interval: 1s }
 flow: { kind: quic, rate: 200Mbps }
 ```
 
-### Emulations (see [DESIGN.md §10](../DESIGN.md#10-traffic-emulation))
+### Emulations (see [DESIGN.md §10](https://github.com/bgrewell/loom/blob/main/DESIGN.md#10-traffic-emulation))
 ```yaml
 flow: { kind: https-browse,     object_size: 100KB..3MB, think: 200ms..2s, keepalive: true }
 flow: { kind: voip-call,        codec: g711, duration: 30s }     # CBR bidirectional

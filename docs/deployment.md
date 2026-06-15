@@ -87,7 +87,7 @@ finishes or `--horizon` elapses, tearing down the flows it placed.
   control planes on a management network.
 
 Full rationale: [Securing the control plane](guides/securing-the-control-plane.md)
-and [ADR-0014](../DECISIONS.md).
+and [ADR-0014](https://github.com/bgrewell/loom/blob/main/DECISIONS.md).
 
 ## Fleets
 
