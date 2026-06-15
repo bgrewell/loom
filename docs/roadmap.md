@@ -97,7 +97,11 @@ on the physical testbed; release-ready.
 - [ ] **DPDK datapath** (cgo, build tag)
 - [ ] **Schedulers** — poisson/bursty + trace-replay
 - [ ] **Perf-regression CI** on the testbed (baselines + tolerance)
-- [ ] **Release engineering** — goreleaser, `loomd` systemd unit, container image
+- [x] **Release engineering — GoReleaser**: tag `vX.Y.Z` → CI cuts a GitHub
+      release with `loom_<ver>_linux_<arch>.tar.gz` binaries (install.sh consumes
+      them); version/commit/date/branch injected via ldflags. Still: a container
+      image and a packaged `loomd` systemd unit.
+- [ ] **Release engineering (cont.)** — container image, `loomd` systemd unit/package
 - [ ] **Hardening** — coverage gate, Apache-header audit, docs/usage polish
 
 ---

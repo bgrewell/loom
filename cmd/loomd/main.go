@@ -16,7 +16,15 @@ import (
 	"github.com/bgrewell/loom/control"
 )
 
-var version = "dev"
+// Build metadata, injected at link time via -ldflags (see .goreleaser.yaml).
+// loomd isn't a stencil CLI, but it reports the same build info on startup and
+// over the control plane (Health.version).
+var (
+	version   = "dev"
+	buildDate = "unknown"
+	commit    = "none"
+	branch    = "none"
+)
 
 func main() {
 	// Default to loopback: an agent is a remotely-aimable traffic generator, so
@@ -47,7 +55,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "loomd: WARNING: listening on a routable address %s with no LOOMD_TOKEN — the control plane is unauthenticated\n", lis.Addr())
 	}
 	gs := control.NewGRPCServer(srv)
-	fmt.Printf("loomd control plane listening on %s\n", lis.Addr())
+	fmt.Printf("loomd %s (%s, %s, built %s) control plane listening on %s\n",
+		version, commit, branch, buildDate, lis.Addr())
 
 	go func() {
 		c := make(chan os.Signal, 1)
