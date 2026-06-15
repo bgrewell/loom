@@ -3,7 +3,7 @@ module github.com/bgrewell/loom
 go 1.25.0
 
 require (
-	github.com/BGrewell/go-conversions v0.0.0-20211209224842-146e47cfb964
+	github.com/BGrewell/go-conversions v0.0.0-20260615151034-4f93f00cd275
 	github.com/asavie/xdp v0.3.3
 	github.com/bgrewell/stencil v0.0.0-20260610184505-9b3d050c070e
 	github.com/vishvananda/netlink v1.1.0

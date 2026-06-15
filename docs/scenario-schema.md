@@ -36,10 +36,13 @@ forms work for `interval`, `object_size`, `after`, etc.
 | distribution | `{ dist: normal, mean: 50ms, stddev: 10ms }` | sampled per use |
 
 Distributions: `uniform {min,max}`, `normal {mean,stddev}`, `exponential {mean}`,
-`constant {value}`, `lognormal {mean,stddev}`. Units: time `ns/us/ms/s/m/h`;
-size/rate `K/M/G` (×1000) and `KB/MB/GB` (×1024); rate suffix `bps` (e.g.
-`100Mbps`). Bare numbers are bytes (size) or nanoseconds (time) — **TBD, see open
-questions**.
+`constant {value}`, `lognormal {mean,stddev}`. Units: time `ns/us/ms/s/m/h`. Sizes
+and rates follow the SI/IEC split: SI decimal prefixes `K/M/G/T` are powers of 1000
+(`100MB` = 100 000 000 bytes, `100Mbps` = 100 000 000 bit/s), while IEC binary
+prefixes `Ki/Mi/Gi/Ti` are powers of 1024 (`100MiB` = 104 857 600 bytes,
+`100Mibps` = 104 857 600 bit/s) — so `100MB` and `100MiB` are **not** the same. A
+trailing `B`/`bps`/`bit` is optional. Bare numbers are bytes (size) or nanoseconds
+(time) — **TBD, see open questions**.
 
 ## Endpoint
 

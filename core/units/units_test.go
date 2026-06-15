@@ -33,17 +33,27 @@ func TestParseRate(t *testing.T) {
 
 func TestParseSize(t *testing.T) {
 	cases := map[string]uint64{
-		"1000":  1000,
-		"100K":  102400,
-		"100KB": 102400,
-		"1.5MB": 1572864,
-		"1GB":   1073741824,
+		"1000":   1000,
+		"100K":   100_000,       // SI decimal
+		"100KB":  100_000,       // SI decimal
+		"1.5MB":  1_500_000,     // SI decimal
+		"1GB":    1_000_000_000, // SI decimal
+		"100KiB": 102_400,       // IEC binary
+		"100MiB": 104_857_600,   // IEC binary (100 * 2^20)
+		"1GiB":   1 << 30,       // IEC binary
+		"512B":   512,
 	}
 	for in, want := range cases {
 		got, err := ParseSize(in)
 		if err != nil || got != want {
 			t.Errorf("ParseSize(%q) = %d, %v; want %d", in, got, err, want)
 		}
+	}
+	// The crux of the fix: SI MB and IEC MiB must not be the same size.
+	mb, _ := ParseSize("100MB")
+	mib, _ := ParseSize("100MiB")
+	if mb == mib {
+		t.Errorf("100MB (%d) must differ from 100MiB (%d)", mb, mib)
 	}
 	if _, err := ParseSize(""); err == nil {
 		t.Error("ParseSize(empty) should error")
@@ -65,7 +75,7 @@ func TestParseDuration(t *testing.T) {
 
 func TestRanges(t *testing.T) {
 	sr, err := ParseSizeRange("100KB..3MB")
-	if err != nil || sr.Lo != 102400 || sr.Hi != 3*1024*1024 {
+	if err != nil || sr.Lo != 100_000 || sr.Hi != 3_000_000 {
 		t.Fatalf("size range = %+v, %v", sr, err)
 	}
 	// scalar → Lo == Hi
