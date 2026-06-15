@@ -138,15 +138,20 @@ func runScenario(ctx *stencil.Context) error {
 	// Stop as soon as the traffic sources finish instead of idling to the horizon.
 	// An end-of-test (unbounded) scenario has no completing sources, so this waits
 	// for the horizon or Ctrl-C instead.
-	if tel.WaitSources(runCtx, c) {
+	waited := tel.WaitSources(runCtx, c)
+	// Freeze the live display now so the printed line count equals the run's
+	// duration/interval — the drain and teardown below would otherwise add a
+	// stray line. The collector keeps ingesting for an accurate final snapshot.
+	tel.Freeze()
+	if waited {
 		time.Sleep(300 * time.Millisecond) // let the receiver drain trailing packets
 	}
 	c.Teardown(context.Background())   // stop receivers; flush their final samples
 	time.Sleep(200 * time.Millisecond) // let the collector ingest those final samples
 	elapsed := time.Since(runStart)
 	summary := tel.Snapshot()
-	cancel()      // stop the collector
-	<-collectDone // let it flush its final tick before we print the summary
+	cancel() // stop the collector
+	<-collectDone
 
 	if jsonOut {
 		printJSONSummary(os.Stdout, summary, elapsed)
