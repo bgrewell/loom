@@ -5,6 +5,7 @@ package controller
 
 import (
 	"testing"
+	"time"
 
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
 	"github.com/bgrewell/loom/core/scenario"
@@ -58,6 +59,30 @@ func TestSenderSpecThreadsDatapathAndIface(t *testing.T) {
 		}
 		if s.GetSeed() != 42 {
 			t.Errorf("seed = %d, want 42", s.GetSeed())
+		}
+	})
+
+	t.Run("emulation duration knob maps to the run duration", func(t *testing.T) {
+		eve := scenario.Event{
+			Name: "call",
+			Flow: scenario.Flow{Kind: "voip-call", Params: map[string]any{"duration": "45s"}},
+			// no Stop.After set
+		}
+		s := senderSpec(eve, "udp", "h:1", from, 0)
+		if got := s.GetDuration().AsDuration(); got != 45*time.Second {
+			t.Errorf("duration = %v, want 45s", got)
+		}
+	})
+
+	t.Run("explicit stop.after wins over the duration knob", func(t *testing.T) {
+		eve := scenario.Event{
+			Name: "call",
+			Flow: scenario.Flow{Kind: "voip-call", Params: map[string]any{"duration": "45s"}},
+			Stop: scenario.Stop{After: 10 * time.Second},
+		}
+		s := senderSpec(eve, "udp", "h:1", from, 0)
+		if got := s.GetDuration().AsDuration(); got != 10*time.Second {
+			t.Errorf("duration = %v, want 10s (stop.after wins)", got)
 		}
 	})
 

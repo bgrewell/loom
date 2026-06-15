@@ -49,6 +49,32 @@ func TestEmulationsCompile(t *testing.T) {
 	}
 }
 
+func TestVoipCodecAndPtime(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	cases := []struct {
+		params    Params
+		wantSize  float64
+		wantThink time.Duration
+	}{
+		{Params{"codec": "g711"}, 160, 20 * time.Millisecond},                      // 64kbps × 20ms
+		{Params{"codec": "g711", "ptime": "30ms"}, 240, 30 * time.Millisecond},     // larger frames, same rate
+		{Params{"codec": "g729"}, 20, 20 * time.Millisecond},                       // 8kbps × 20ms
+		{Params{"codec": "g711", "frame_size": "200"}, 200, 20 * time.Millisecond}, // override
+	}
+	for _, c := range cases {
+		s, err := Build("voip-call", c.params)
+		if err != nil || len(s) != 1 {
+			t.Fatalf("%v: Build = %d steps, %v", c.params, len(s), err)
+		}
+		if got := s[0].Size.Sample(r); got != c.wantSize {
+			t.Errorf("%v: frame size = %v, want %v", c.params, got, c.wantSize)
+		}
+		if got := time.Duration(s[0].Think.Sample(r)); got != c.wantThink {
+			t.Errorf("%v: ptime = %v, want %v", c.params, got, c.wantThink)
+		}
+	}
+}
+
 // TestRunnerSendsAndStops drives a CBR-like script over the discard sink and
 // confirms it accounts traffic and honors a count stop.
 func TestRunnerSendsAndStops(t *testing.T) {

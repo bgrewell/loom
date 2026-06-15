@@ -25,6 +25,7 @@ import (
 	"github.com/bgrewell/loom/core/scenario"
 	"github.com/bgrewell/loom/core/selection"
 	"github.com/bgrewell/loom/core/timeline"
+	"github.com/bgrewell/loom/core/units"
 )
 
 // Role distinguishes the two flows a fire creates.
@@ -277,8 +278,17 @@ func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint, se
 	if v, ok := ev.Flow.Params["rate"]; ok {
 		spec.Rate = fmt.Sprint(v)
 	}
-	if ev.Stop.After > 0 {
+	switch {
+	case ev.Stop.After > 0:
 		spec.Duration = durationpb.New(ev.Stop.After)
+	case spec.Emulation != "":
+		// Convenience: emulations may set a `duration` knob in the flow block
+		// instead of a stop.after — e.g. a voip-call's call length.
+		if v, ok := ev.Flow.Params["duration"]; ok {
+			if d, err := units.ParseDuration(fmt.Sprint(v)); err == nil {
+				spec.Duration = durationpb.New(d)
+			}
+		}
 	}
 	spec.Count = ev.Stop.Count
 	spec.Volume = ev.Stop.Volume

@@ -37,12 +37,11 @@ timeline:
   - name: a-call
     flow:
       kind: voip-call          # the emulation
-      codec: g711              # its parameters
+      codec: g711              # its knobs…
+      duration: 60s            # …including the call length
     from: phone
     to: pbx
     start: 0s
-    stop:
-      after: 60s
 ```
 
 Run it with `loomctl` as usual ([multi-agent guide](multi-agent-scenario.md)).
@@ -52,10 +51,14 @@ Any agent can run any emulation — they're built in.
 
 | `kind` | Shape | Key params (defaults) |
 |---|---|---|
-| `voip-call` | constant-bit-rate media | `codec` (`g711`=160 B/20 ms, `g729`), `frame_size`, `interval` |
-| `https-browse` | a keep-alive session of object fetches with reading pauses | `objects` (`10`), `object_size` (`8KB..512KB`), `think` (`200ms..2s`) |
-| `prometheus-sender` | periodic remote-write batches | `scrape` (`15s`), `batch_size` (`64KB`) |
-| `ssh-session` | interactive keystrokes, optional bulk (scp) | `keys` (`100`), `key_size` (`1..64`), `interkey` (`80ms..300ms`), `bulk` (`0`) |
+| `voip-call` | constant-bit-rate media | `codec` (`g711` 64 kbps · `g729` 8 kbps · `opus` ~32 kbps), `ptime` (`20ms`; alias `interval`), `frame_size` (override; default = bitrate × ptime, e.g. g711@20 ms = 160 B), `duration` |
+| `https-browse` | a keep-alive session of object fetches with reading pauses | `objects` (`10`), `object_size` (`8KB..512KB`), `think` (`200ms..2s`), `duration` |
+| `prometheus-sender` | periodic remote-write batches | `scrape` (`15s`), `batch_size` (`64KB`), `duration` |
+| `ssh-session` | interactive keystrokes, optional bulk (scp) | `keys` (`100`), `key_size` (`1..64`), `interkey` (`80ms..300ms`), `bulk` (`0`=none), `duration` |
+
+Every emulation also accepts a **`duration`** knob (e.g. a call length) as a
+convenient alternative to a `stop.after` — set either; an explicit `stop.after`
+wins. `count`/`volume` stop conditions work too (via the `stop:` block).
 
 Sizes and times accept the standard [value grammar](../scenario-schema.md): a
 scalar (`160`, `64KB`, `20ms`) is a fixed value; a `lo..hi` range
