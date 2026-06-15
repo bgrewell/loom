@@ -11,10 +11,19 @@ minutes, then points you at what to read next. No prior loom knowledge assumed.
 ## Install
 
 ```console
+curl -fsSL https://raw.githubusercontent.com/bgrewell/loom/main/scripts/install.sh | bash
+```
+
+That installs all three binaries (`loom`, `loomd`, `loomctl`) — prebuilt when
+available, else built from source. Options and the upgrade/uninstall counterparts
+are in [scripts/README.md](../scripts/README.md). Prefer the Go toolchain
+directly?
+
+```console
 go install github.com/bgrewell/loom/cmd/loom@latest
 ```
 
-That builds the `loom` CLI — the single-flow tool you'll use here. (Two more
+That builds just the `loom` CLI — the single-flow tool you'll use here. (Two more
 binaries, `loomd` and `loomctl`, drive multi-machine scenarios; you'll meet them
 in the [multi-agent guide](guides/multi-agent-scenario.md).) If you've cloned the
 repo, `go run ./cmd/loom` works too.

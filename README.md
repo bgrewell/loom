@@ -48,7 +48,17 @@ The full manual lives in **[docs/](docs/README.md)**.
 ## Install
 
 ```console
-# From source (Go 1.22+):
+curl -fsSL https://raw.githubusercontent.com/bgrewell/loom/main/scripts/install.sh | bash
+```
+
+Installs `loom`, `loomd`, and `loomctl` — prebuilt binaries when available, else
+built from source. [`upgrade.sh`](scripts/upgrade.sh) and
+[`uninstall.sh`](scripts/uninstall.sh) are the counterparts; tuning and options
+are in [scripts/README.md](scripts/README.md).
+
+Or with the Go toolchain:
+
+```console
 go install github.com/bgrewell/loom/cmd/loom@latest     # the CLI
 go install github.com/bgrewell/loom/cmd/loomd@latest    # the agent
 go install github.com/bgrewell/loom/cmd/loomctl@latest  # the controller
