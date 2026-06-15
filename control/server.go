@@ -14,10 +14,7 @@ import (
 	"google.golang.org/grpc"
 
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
-	"github.com/bgrewell/loom/core/datapath"
-	"github.com/bgrewell/loom/core/generator"
-	"github.com/bgrewell/loom/core/payload"
-	"github.com/bgrewell/loom/core/scheduler"
+	"github.com/bgrewell/loom/core/components"
 )
 
 // Server implements loomv1.ControlServer. Flow-lifecycle RPCs
@@ -27,28 +24,41 @@ type Server struct {
 	loomv1.UnimplementedControlServer
 	version   string
 	mgr       *flowManager
-	telemetry time.Duration // telemetry sample interval (0 = 1s)
-	authToken string        // shared control-plane token (empty = auth disabled)
+	telemetry time.Duration          // telemetry sample interval (0 = 1s)
+	authToken string                 // shared control-plane token (empty = auth disabled)
+	comps     *components.Components // pluggable parts this agent offers
 }
 
-// NewServer returns a control Server reporting the given version.
-func NewServer(version string) *Server {
-	return &Server{version: version, mgr: newFlowManager()}
+// Option configures a Server (ADR-0022). Apply at construction via NewServer.
+type Option func(*Server)
+
+// WithTelemetryInterval sets how often StreamTelemetry emits samples (0 = 1s).
+func WithTelemetryInterval(d time.Duration) Option { return func(s *Server) { s.telemetry = d } }
+
+// WithMaxFlows caps concurrently configured flows; Configure returns
+// ResourceExhausted past the cap. n <= 0 removes the limit (not recommended on a
+// reachable agent).
+func WithMaxFlows(n int) Option { return func(s *Server) { s.mgr.max = n } }
+
+// WithAuthToken sets the shared control-plane token (ADR-0014). When non-empty,
+// NewGRPCServer installs interceptors that reject any RPC lacking a matching
+// bearer token; empty leaves the plane open.
+func WithAuthToken(token string) Option { return func(s *Server) { s.authToken = token } }
+
+// WithComponents sets the datapath/generator/scheduler/payload registries this
+// agent builds flows from and advertises via Capabilities. Defaults to
+// components.Default().
+func WithComponents(c *components.Components) Option { return func(s *Server) { s.comps = c } }
+
+// NewServer returns a control Server reporting the given version, configured by
+// opts.
+func NewServer(version string, opts ...Option) *Server {
+	s := &Server{version: version, mgr: newFlowManager(), comps: components.Default()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
-
-// SetTelemetryInterval sets how often StreamTelemetry emits samples. Call before
-// serving. 0 restores the 1s default.
-func (s *Server) SetTelemetryInterval(d time.Duration) { s.telemetry = d }
-
-// SetMaxFlows caps the number of concurrently configured flows on this agent;
-// Configure returns ResourceExhausted past the cap. Call before serving. n <= 0
-// removes the limit (not recommended on a reachable agent).
-func (s *Server) SetMaxFlows(n int) { s.mgr.max = n }
-
-// SetAuthToken sets the shared control-plane token (ADR-0014). Call before
-// serving. When non-empty, NewGRPCServer installs interceptors that reject any
-// RPC lacking a matching bearer token; empty leaves the plane open.
-func (s *Server) SetAuthToken(token string) { s.authToken = token }
 
 // AuthEnabled reports whether a control-plane token is configured.
 func (s *Server) AuthEnabled() bool { return s.authToken != "" }
@@ -84,13 +94,13 @@ func (s *Server) Register(_ context.Context, req *loomv1.RegisterRequest) (*loom
 	return &loomv1.RegisterResponse{Session: req.GetAgentId()}, nil
 }
 
-// Capabilities reports what this agent can do, from the live registries.
+// Capabilities reports what this agent can do, from its configured components.
 func (s *Server) Capabilities(context.Context, *loomv1.CapabilitiesRequest) (*loomv1.CapabilitiesResponse, error) {
 	return &loomv1.CapabilitiesResponse{
-		Datapaths:  datapath.Registry.Names(),
-		Generators: generator.Registry.Names(),
-		Schedulers: scheduler.Registry.Names(),
-		Payloads:   payload.Registry.Names(),
+		Datapaths:  s.comps.TxDatapaths.Names(),
+		Generators: s.comps.Generators.Names(),
+		Schedulers: s.comps.Schedulers.Names(),
+		Payloads:   s.comps.Payloads.Names(),
 	}, nil
 }
 

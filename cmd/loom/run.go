@@ -61,7 +61,7 @@ func runFlow(ctx *stencil.Context) error {
 		Duration:   f.Duration("duration"),
 		Count:      uint64(f.Int("count")),
 		Volume:     volume,
-	})
+	}, nil) // nil components = the default registry set
 	if err != nil {
 		return err
 	}

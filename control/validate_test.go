@@ -79,7 +79,7 @@ func TestConfigureRejectsOversizedPacket(t *testing.T) {
 // TestConfigureFlowLimit: past the configured cap, Configure returns
 // ResourceExhausted rather than binding more ports / allocating more flows.
 func TestConfigureFlowLimit(t *testing.T) {
-	client, _, stop := dialAgent(t, func(s *Server) { s.SetMaxFlows(2) })
+	client, _, stop := dialAgent(t, func(s *Server) { s.mgr.max = 2 })
 	defer stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

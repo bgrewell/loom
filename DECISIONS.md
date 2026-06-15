@@ -287,7 +287,7 @@ Register), so a message field would duplicate working machinery; a future
 enrollment-token flow can add one when its semantics differ from transport auth.
 
 ## ADR-0022 — Inject component registries; functional options on constructors
-**Status:** Proposed · **Date:** 2026-06-13
+**Status:** Accepted · **Date:** 2026-06-13 · **Resolved:** 2026-06-15
 
 **Context.** Datapath/generator/scheduler/payload are exposed as package-level
 `var Registry = registry.New[…]()` populated in `init()`. The generic
@@ -310,3 +310,17 @@ without real gRPC.
 sets, no global mutable state, and constructors that match the house style. A
 mechanical refactor across `flow`/`control`/`controller`; the global registries
 can remain as the `DefaultComponents()` backing during transition.
+**Resolution.** Implemented as `core/components.Components` (Tx/Rx datapath +
+generator + scheduler + payload registries) with `Default()`/`OrDefault()`.
+`flow.Build(spec, *Components)` (nil = default) and `control.NewServer(version,
+WithComponents/WithTelemetryInterval/WithMaxFlows/WithAuthToken)` take it; the
+agent advertises and builds from its injected set, so `Capabilities` is
+per-agent-truthful. `controller.New` gained `WithDialer` (testable without gRPC).
+**Pragmatic limit kept on purpose:** the built-in and build-tagged (afxdp)
+factories still self-register into the package-level registries, and `Default()`
+wraps those — so `init()`-based and tag-gated plugin registration keeps working
+with far less churn. Components is the injectable *handle*; the global registries
+remain the default registration *sink*. (One known gap: the `stream` generator
+still resolves its payloader from the global `payload.Registry` internally, so a
+custom `Components.Payloads` affects capability reporting but not building until
+the generator takes a payload registry — a later cleanup if needed.)
