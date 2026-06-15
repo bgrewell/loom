@@ -22,6 +22,8 @@ type Spec struct {
 	Payload    string
 	Datapath   string
 	Target     string // host:port for udp/tcp
+	Iface      string // NIC name for afxdp
+	Queue      int    // NIC queue for afxdp
 	PacketSize int
 	Rate       string // e.g. "100Mbps"; empty = unlimited
 	Duration   time.Duration
@@ -54,7 +56,9 @@ func Build(spec Spec) (*Flow, error) {
 	if dname == "" {
 		dname = "discard"
 	}
-	dp, err := datapath.Registry.Build(dname, datapath.Options{Addr: spec.Target, FrameSize: spec.PacketSize})
+	dp, err := datapath.Registry.Build(dname, datapath.Options{
+		Addr: spec.Target, FrameSize: spec.PacketSize, Iface: spec.Iface, Queue: spec.Queue,
+	})
 	if err != nil {
 		return nil, err
 	}

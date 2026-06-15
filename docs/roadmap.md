@@ -69,8 +69,10 @@ available; a web dashboard shows live flow state.
       [ADR-0020](../DECISIONS.md#adr-0020--per-packet-rx-metadata-carrier))
 - [ ] **AF_PACKET datapath**
 - [x] **AF_XDP datapath** (TX + RX, zero-copy over UMEM) + RawL2 capability —
-      build-tagged `afxdp`, veth-validated; end-to-end scenario/agent wiring
-      (selecting afxdp + receiver-side afxdp + iface/queue config) is a follow-up
+      build-tagged `afxdp`, veth-validated, **wired end to end**: `datapath: afxdp`
+      + per-endpoint `iface`/`queue` in a scenario drive afxdp sender & receiver
+      (see docs/examples/afxdp-veth.scenario.yaml). Remaining: a frame generator
+      emitting valid L2/L3/L4 headers for real NICs (raw bytes work over veth)
 - [ ] **Reporter sinks** — file/json, prometheus, socket
 - [x] **Wire/proto discipline** — reserved ranges, FlowRole enum, api_version
       handshake, protobuf.Duration ([ADR-0021](../DECISIONS.md#adr-0021--wireproto-evolution-discipline)); auth rides call metadata (ADR-0014)

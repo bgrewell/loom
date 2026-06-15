@@ -83,6 +83,8 @@ message FlowSpec {
   string target = 4; // host:port for udp/tcp
   uint32 packet_size = 5;
   string rate = 6; // e.g. "100Mbps"; empty = unlimited
+  string iface = 7; // NIC name for the afxdp datapath
+  uint32 queue = 8; // NIC queue for the afxdp datapath
   // Stop condition (whichever is reached first; all empty = until-stopped).
   google.protobuf.Duration duration = 10;
   uint64 count = 11;  // packets

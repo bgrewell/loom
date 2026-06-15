@@ -210,9 +210,11 @@ func (a *AFXDPRx) Close() error {
 }
 
 func init() {
-	// Register the TX side so senders can select "afxdp" (receivers are built
-	// directly, like the UDP listener).
+	// Available under the afxdp build tag for both senders and receivers.
 	Registry.Register("afxdp", func(o Options) (TxDatapath, error) {
 		return NewAFXDPTx(o.Iface, o.Queue)
+	})
+	RxRegistry.Register("afxdp", func(o Options) (RxDatapath, error) {
+		return NewAFXDPRx(o.Iface, o.Queue)
 	})
 }

@@ -35,11 +35,14 @@ type Defaults struct {
 	Scheduler map[string]any `yaml:"scheduler"`
 }
 
-// Endpoint is a named point traffic runs between.
+// Endpoint is a named point traffic runs between. Iface/Queue select the NIC and
+// queue this endpoint uses for NIC-bound datapaths (e.g. afxdp).
 type Endpoint struct {
 	Name    string   `yaml:"name"`
 	Tags    []string `yaml:"tags"`
 	Address string   `yaml:"address"`
+	Iface   string   `yaml:"iface"`
+	Queue   int      `yaml:"queue"`
 }
 
 // Event is one timeline entry.
