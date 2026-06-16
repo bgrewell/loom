@@ -1182,11 +1182,12 @@ type TelemetrySample struct {
 	// Interval accounting, anchored to the scheduled-start gate. The agent reads
 	// its counters at each boundary start_at + k*I and reports the interval's delta,
 	// so the controller is a pure summer (no central rate clock).
-	IntervalIndex   int64  `protobuf:"varint,6,opt,name=interval_index,json=intervalIndex,proto3" json:"interval_index,omitempty"`       // k: 0 for [T,T+I], 1 for [T+I,T+2I], …; -1 on the final sample
-	IntervalBytes   uint64 `protobuf:"varint,7,opt,name=interval_bytes,json=intervalBytes,proto3" json:"interval_bytes,omitempty"`       // delta bytes during interval k
-	IntervalPackets uint64 `protobuf:"varint,8,opt,name=interval_packets,json=intervalPackets,proto3" json:"interval_packets,omitempty"` // delta packets during interval k
-	IntervalNanos   int64  `protobuf:"varint,9,opt,name=interval_nanos,json=intervalNanos,proto3" json:"interval_nanos,omitempty"`       // measured elapsed ns of interval k (rate = interval_bytes*8/interval_nanos)
-	Final           bool   `protobuf:"varint,10,opt,name=final,proto3" json:"final,omitempty"`                                           // true on the completion sample (trailing partial interval)
+	IntervalIndex   int64    `protobuf:"varint,6,opt,name=interval_index,json=intervalIndex,proto3" json:"interval_index,omitempty"`       // k: 0 for [T,T+I], 1 for [T+I,T+2I], …; -1 on the final sample
+	IntervalBytes   uint64   `protobuf:"varint,7,opt,name=interval_bytes,json=intervalBytes,proto3" json:"interval_bytes,omitempty"`       // delta bytes during interval k
+	IntervalPackets uint64   `protobuf:"varint,8,opt,name=interval_packets,json=intervalPackets,proto3" json:"interval_packets,omitempty"` // delta packets during interval k
+	IntervalNanos   int64    `protobuf:"varint,9,opt,name=interval_nanos,json=intervalNanos,proto3" json:"interval_nanos,omitempty"`       // measured elapsed ns of interval k (rate = interval_bytes*8/interval_nanos)
+	Final           bool     `protobuf:"varint,10,opt,name=final,proto3" json:"final,omitempty"`                                           // true on the completion sample (trailing partial interval)
+	Tcp             *TcpInfo `protobuf:"bytes,11,opt,name=tcp,proto3" json:"tcp,omitempty"`                                                // sender-side TCP_INFO diagnostics (nil for non-TCP datapaths)
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1291,6 +1292,100 @@ func (x *TelemetrySample) GetFinal() bool {
 	return false
 }
 
+func (x *TelemetrySample) GetTcp() *TcpInfo {
+	if x != nil {
+		return x.Tcp
+	}
+	return nil
+}
+
+// TcpInfo carries a snapshot of the sender socket's kernel TCP_INFO, for link
+// profiling (is TCP entering a bad state?). Populated only for the TCP datapath
+// on the sending side; zero/absent otherwise.
+type TcpInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TotalRetrans  uint32                 `protobuf:"varint,1,opt,name=total_retrans,json=totalRetrans,proto3" json:"total_retrans,omitempty"` // cumulative retransmitted segments
+	Lost          uint32                 `protobuf:"varint,2,opt,name=lost,proto3" json:"lost,omitempty"`                                     // segments currently considered lost
+	RttUs         uint32                 `protobuf:"varint,3,opt,name=rtt_us,json=rttUs,proto3" json:"rtt_us,omitempty"`                      // smoothed round-trip time (microseconds)
+	RttvarUs      uint32                 `protobuf:"varint,4,opt,name=rttvar_us,json=rttvarUs,proto3" json:"rttvar_us,omitempty"`             // round-trip time variance (microseconds)
+	SndCwnd       uint32                 `protobuf:"varint,5,opt,name=snd_cwnd,json=sndCwnd,proto3" json:"snd_cwnd,omitempty"`                // congestion window (segments)
+	SndSsthresh   uint32                 `protobuf:"varint,6,opt,name=snd_ssthresh,json=sndSsthresh,proto3" json:"snd_ssthresh,omitempty"`    // slow-start threshold (segments)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TcpInfo) Reset() {
+	*x = TcpInfo{}
+	mi := &file_proto_loom_v1_control_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TcpInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TcpInfo) ProtoMessage() {}
+
+func (x *TcpInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_loom_v1_control_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TcpInfo.ProtoReflect.Descriptor instead.
+func (*TcpInfo) Descriptor() ([]byte, []int) {
+	return file_proto_loom_v1_control_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *TcpInfo) GetTotalRetrans() uint32 {
+	if x != nil {
+		return x.TotalRetrans
+	}
+	return 0
+}
+
+func (x *TcpInfo) GetLost() uint32 {
+	if x != nil {
+		return x.Lost
+	}
+	return 0
+}
+
+func (x *TcpInfo) GetRttUs() uint32 {
+	if x != nil {
+		return x.RttUs
+	}
+	return 0
+}
+
+func (x *TcpInfo) GetRttvarUs() uint32 {
+	if x != nil {
+		return x.RttvarUs
+	}
+	return 0
+}
+
+func (x *TcpInfo) GetSndCwnd() uint32 {
+	if x != nil {
+		return x.SndCwnd
+	}
+	return 0
+}
+
+func (x *TcpInfo) GetSndSsthresh() uint32 {
+	if x != nil {
+		return x.SndSsthresh
+	}
+	return 0
+}
+
 var File_proto_loom_v1_control_proto protoreflect.FileDescriptor
 
 const file_proto_loom_v1_control_proto_rawDesc = "" +
@@ -1370,7 +1465,7 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x02t2\x18\x02 \x01(\x03R\x02t2\x12\x0e\n" +
 	"\x02t3\x18\x03 \x01(\x03R\x02t3\"+\n" +
 	"\x10TelemetryRequest\x12\x17\n" +
-	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\xc8\x02\n" +
+	"\aflow_id\x18\x01 \x01(\tR\x06flowId\"\xec\x02\n" +
 	"\x0fTelemetrySample\x12\x17\n" +
 	"\aflow_id\x18\x01 \x01(\tR\x06flowId\x12\x14\n" +
 	"\x05nanos\x18\x02 \x01(\x03R\x05nanos\x12\x14\n" +
@@ -1383,7 +1478,15 @@ const file_proto_loom_v1_control_proto_rawDesc = "" +
 	"\x10interval_packets\x18\b \x01(\x04R\x0fintervalPackets\x12%\n" +
 	"\x0einterval_nanos\x18\t \x01(\x03R\rintervalNanos\x12\x14\n" +
 	"\x05final\x18\n" +
-	" \x01(\bR\x05final*\x9e\x01\n" +
+	" \x01(\bR\x05final\x12\"\n" +
+	"\x03tcp\x18\v \x01(\v2\x10.loom.v1.TcpInfoR\x03tcp\"\xb4\x01\n" +
+	"\aTcpInfo\x12#\n" +
+	"\rtotal_retrans\x18\x01 \x01(\rR\ftotalRetrans\x12\x12\n" +
+	"\x04lost\x18\x02 \x01(\rR\x04lost\x12\x15\n" +
+	"\x06rtt_us\x18\x03 \x01(\rR\x05rttUs\x12\x1b\n" +
+	"\trttvar_us\x18\x04 \x01(\rR\brttvarUs\x12\x19\n" +
+	"\bsnd_cwnd\x18\x05 \x01(\rR\asndCwnd\x12!\n" +
+	"\fsnd_ssthresh\x18\x06 \x01(\rR\vsndSsthresh*\x9e\x01\n" +
 	"\bFlowRole\x12\x19\n" +
 	"\x15FLOW_ROLE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10FLOW_ROLE_SENDER\x10\x01\x12\x16\n" +
@@ -1416,7 +1519,7 @@ func file_proto_loom_v1_control_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_loom_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_loom_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_proto_loom_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_proto_loom_v1_control_proto_goTypes = []any{
 	(FlowRole)(0),                // 0: loom.v1.FlowRole
 	(*HealthRequest)(nil),        // 1: loom.v1.HealthRequest
@@ -1440,39 +1543,41 @@ var file_proto_loom_v1_control_proto_goTypes = []any{
 	(*TimeSyncResponse)(nil),     // 19: loom.v1.TimeSyncResponse
 	(*TelemetryRequest)(nil),     // 20: loom.v1.TelemetryRequest
 	(*TelemetrySample)(nil),      // 21: loom.v1.TelemetrySample
-	nil,                          // 22: loom.v1.FlowSpec.ParamsEntry
-	(*durationpb.Duration)(nil),  // 23: google.protobuf.Duration
+	(*TcpInfo)(nil),              // 22: loom.v1.TcpInfo
+	nil,                          // 23: loom.v1.FlowSpec.ParamsEntry
+	(*durationpb.Duration)(nil),  // 24: google.protobuf.Duration
 }
 var file_proto_loom_v1_control_proto_depIdxs = []int32{
-	23, // 0: loom.v1.FlowSpec.duration:type_name -> google.protobuf.Duration
-	22, // 1: loom.v1.FlowSpec.params:type_name -> loom.v1.FlowSpec.ParamsEntry
+	24, // 0: loom.v1.FlowSpec.duration:type_name -> google.protobuf.Duration
+	23, // 1: loom.v1.FlowSpec.params:type_name -> loom.v1.FlowSpec.ParamsEntry
 	0,  // 2: loom.v1.FlowSpec.role:type_name -> loom.v1.FlowRole
 	7,  // 3: loom.v1.ConfigureRequest.flow:type_name -> loom.v1.FlowSpec
-	1,  // 4: loom.v1.Control.Health:input_type -> loom.v1.HealthRequest
-	3,  // 5: loom.v1.Control.Register:input_type -> loom.v1.RegisterRequest
-	5,  // 6: loom.v1.Control.Capabilities:input_type -> loom.v1.CapabilitiesRequest
-	8,  // 7: loom.v1.Control.Configure:input_type -> loom.v1.ConfigureRequest
-	10, // 8: loom.v1.Control.Arm:input_type -> loom.v1.ArmRequest
-	12, // 9: loom.v1.Control.Start:input_type -> loom.v1.StartRequest
-	14, // 10: loom.v1.Control.Stop:input_type -> loom.v1.StopRequest
-	16, // 11: loom.v1.Control.Destroy:input_type -> loom.v1.DestroyRequest
-	18, // 12: loom.v1.Control.TimeSync:input_type -> loom.v1.TimeSyncRequest
-	20, // 13: loom.v1.Control.StreamTelemetry:input_type -> loom.v1.TelemetryRequest
-	2,  // 14: loom.v1.Control.Health:output_type -> loom.v1.HealthResponse
-	4,  // 15: loom.v1.Control.Register:output_type -> loom.v1.RegisterResponse
-	6,  // 16: loom.v1.Control.Capabilities:output_type -> loom.v1.CapabilitiesResponse
-	9,  // 17: loom.v1.Control.Configure:output_type -> loom.v1.ConfigureResponse
-	11, // 18: loom.v1.Control.Arm:output_type -> loom.v1.ArmResponse
-	13, // 19: loom.v1.Control.Start:output_type -> loom.v1.StartResponse
-	15, // 20: loom.v1.Control.Stop:output_type -> loom.v1.StopResponse
-	17, // 21: loom.v1.Control.Destroy:output_type -> loom.v1.DestroyResponse
-	19, // 22: loom.v1.Control.TimeSync:output_type -> loom.v1.TimeSyncResponse
-	21, // 23: loom.v1.Control.StreamTelemetry:output_type -> loom.v1.TelemetrySample
-	14, // [14:24] is the sub-list for method output_type
-	4,  // [4:14] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	22, // 4: loom.v1.TelemetrySample.tcp:type_name -> loom.v1.TcpInfo
+	1,  // 5: loom.v1.Control.Health:input_type -> loom.v1.HealthRequest
+	3,  // 6: loom.v1.Control.Register:input_type -> loom.v1.RegisterRequest
+	5,  // 7: loom.v1.Control.Capabilities:input_type -> loom.v1.CapabilitiesRequest
+	8,  // 8: loom.v1.Control.Configure:input_type -> loom.v1.ConfigureRequest
+	10, // 9: loom.v1.Control.Arm:input_type -> loom.v1.ArmRequest
+	12, // 10: loom.v1.Control.Start:input_type -> loom.v1.StartRequest
+	14, // 11: loom.v1.Control.Stop:input_type -> loom.v1.StopRequest
+	16, // 12: loom.v1.Control.Destroy:input_type -> loom.v1.DestroyRequest
+	18, // 13: loom.v1.Control.TimeSync:input_type -> loom.v1.TimeSyncRequest
+	20, // 14: loom.v1.Control.StreamTelemetry:input_type -> loom.v1.TelemetryRequest
+	2,  // 15: loom.v1.Control.Health:output_type -> loom.v1.HealthResponse
+	4,  // 16: loom.v1.Control.Register:output_type -> loom.v1.RegisterResponse
+	6,  // 17: loom.v1.Control.Capabilities:output_type -> loom.v1.CapabilitiesResponse
+	9,  // 18: loom.v1.Control.Configure:output_type -> loom.v1.ConfigureResponse
+	11, // 19: loom.v1.Control.Arm:output_type -> loom.v1.ArmResponse
+	13, // 20: loom.v1.Control.Start:output_type -> loom.v1.StartResponse
+	15, // 21: loom.v1.Control.Stop:output_type -> loom.v1.StopResponse
+	17, // 22: loom.v1.Control.Destroy:output_type -> loom.v1.DestroyResponse
+	19, // 23: loom.v1.Control.TimeSync:output_type -> loom.v1.TimeSyncResponse
+	21, // 24: loom.v1.Control.StreamTelemetry:output_type -> loom.v1.TelemetrySample
+	15, // [15:25] is the sub-list for method output_type
+	5,  // [5:15] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_proto_loom_v1_control_proto_init() }
@@ -1486,7 +1591,7 @@ func file_proto_loom_v1_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_loom_v1_control_proto_rawDesc), len(file_proto_loom_v1_control_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   22,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

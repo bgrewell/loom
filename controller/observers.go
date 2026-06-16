@@ -183,6 +183,23 @@ func lossLine(a Aggregate) string {
 	return fmt.Sprintf("  loss       %.2f%%   (%s)\n", pct, humanBytes(lostBytes))
 }
 
+// tcpLine renders a sender flow's TCP_INFO for the summary: retransmits and lost
+// segments (climbing = trouble), smoothed RTT ± variance, and the congestion
+// window / slow-start threshold (a collapsed cwnd signals congestion).
+func tcpLine(f FlowSample) string {
+	t := f.TCP
+	ssthresh := fmt.Sprintf("%d", t.Ssthresh)
+	if t.Ssthresh >= 1<<30 { // kernel reports ~INT_MAX while still in slow start
+		ssthresh = "∞"
+	}
+	dir := flowDir(f)
+	if dir != "" {
+		dir = "   (" + dir + ")"
+	}
+	return fmt.Sprintf("  tcp        retrans %d  lost %d  rtt %.2fms ±%.2f  cwnd %d seg  ssthresh %s%s\n",
+		t.Retrans, t.Lost, float64(t.RttUs)/1000, float64(t.RttvarUs)/1000, t.Cwnd, ssthresh, dir)
+}
+
 // StreamSummary counts the distinct streams (events) in the flows and lists their
 // unique directions, for the summary header. One event = one logical stream
 // (carried by a sender + receiver pair). Exported for the JSON summary in loomctl.
@@ -232,6 +249,13 @@ func (a Aggregate) Summary(scenario string, duration time.Duration, perFlow, liv
 	fmt.Fprintf(&b, "  tx %-10s avg %s   (sender-measured)\n", humanBytes(a.TxBytes), avg(a.TxBytes))
 	fmt.Fprintf(&b, "  rx %-10s avg %s   (receiver-measured)\n", humanBytes(a.RxBytes), avg(a.RxBytes))
 	b.WriteString(lossLine(a))
+	// TCP health (retransmits/RTT/cwnd) per sending TCP flow — the signal byte
+	// accounting can't show, since TCP recovers loss below the app layer.
+	for _, f := range sortedFlows(a.Flows) {
+		if f.TCP != nil && (f.Role == Sender || f.Role == Responder || f.Role == Requester) {
+			fmt.Fprintf(&b, "%s", tcpLine(f))
+		}
+	}
 	if perFlow {
 		for _, f := range sortedFlows(a.Flows) {
 			fmt.Fprintf(&b, "  %-10s %-15s %-9s %-10s avg %s\n",

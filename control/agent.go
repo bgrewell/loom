@@ -406,6 +406,30 @@ func (s *Server) StreamTelemetry(req *loomv1.TelemetryRequest, stream loomv1.Con
 	return streamBoundaries(req, mf, stream, startAt, interval)
 }
 
+// flowTCPInfo returns the sender flow's TCP_INFO snapshot as a proto message, or
+// nil for a flow whose datapath has no transport diagnostics (udp, afxdp, the
+// receiver side). Read at each boundary so the summary carries the end-state.
+func flowTCPInfo(mf *managedFlow) *loomv1.TcpInfo {
+	d, ok := mf.run.(interface {
+		Diag() (datapath.TCPDiag, bool)
+	})
+	if !ok {
+		return nil
+	}
+	info, ok := d.Diag()
+	if !ok {
+		return nil
+	}
+	return &loomv1.TcpInfo{
+		TotalRetrans: info.TotalRetrans,
+		Lost:         info.Lost,
+		RttUs:        info.RttUs,
+		RttvarUs:     info.RttvarUs,
+		SndCwnd:      info.SndCwnd,
+		SndSsthresh:  info.SndSsthresh,
+	}
+}
+
 // streamBoundaries emits one sample per interval boundary anchored to the gate.
 // The agent reads its counters at the boundary instant, so each interval's delta
 // is exact — no rate estimation, no first-sample inflation.
@@ -434,14 +458,14 @@ func streamBoundaries(req *loomv1.TelemetryRequest, mf *managedFlow, stream loom
 			return stream.Send(&loomv1.TelemetrySample{
 				FlowId: req.GetFlowId(), Nanos: now.UnixNano(), Bytes: b, Packets: p,
 				IntervalIndex: -1, IntervalBytes: b - prevBytes, IntervalPackets: p - prevPkts,
-				IntervalNanos: now.Sub(prevTime).Nanoseconds(), Final: true,
+				IntervalNanos: now.Sub(prevTime).Nanoseconds(), Final: true, Tcp: flowTCPInfo(mf),
 			})
 		case <-timer.C:
 			b, p := c.Bytes(), c.Packets()
 			if err := stream.Send(&loomv1.TelemetrySample{
 				FlowId: req.GetFlowId(), Nanos: boundary.UnixNano(), Bytes: b, Packets: p,
 				IntervalIndex: k, IntervalBytes: b - prevBytes, IntervalPackets: p - prevPkts,
-				IntervalNanos: boundary.Sub(prevTime).Nanoseconds(),
+				IntervalNanos: boundary.Sub(prevTime).Nanoseconds(), Tcp: flowTCPInfo(mf),
 			}); err != nil {
 				return err
 			}

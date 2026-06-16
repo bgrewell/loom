@@ -40,6 +40,16 @@ type Flow struct {
 // Counters exposes the flow's live byte/packet totals for sampling/reporting.
 func (f *Flow) Counters() *accounting.Counters { return &f.acct }
 
+// Diag reports the datapath's transport health (TCP_INFO for the TCP datapath) if
+// it supports it, for link profiling. ok is false for datapaths with no
+// diagnostics (udp, afxdp, discard).
+func (f *Flow) Diag() (datapath.TCPDiag, bool) {
+	if d, ok := f.Datapath.(datapath.Diagnoser); ok {
+		return d.Diag()
+	}
+	return datapath.TCPDiag{}, false
+}
+
 // Run executes the flow until its stop condition or ctx cancellation. Returns
 // nil on a clean stop, or the datapath's error on a send failure.
 func (f *Flow) Run(ctx context.Context) error {

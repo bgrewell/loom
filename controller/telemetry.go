@@ -27,6 +27,17 @@ type FlowSample struct {
 	Bytes      uint64
 	Packets    uint64
 	BitsPerSec float64
+	TCP        *TCPStats // sender-side TCP_INFO, nil for non-TCP / receiver flows
+}
+
+// TCPStats is a sender socket's TCP_INFO snapshot, surfaced for link profiling.
+type TCPStats struct {
+	Retrans  uint32
+	Lost     uint32
+	RttUs    uint32
+	RttvarUs uint32
+	Cwnd     uint32
+	Ssthresh uint32
 }
 
 // Aggregate is a consolidated telemetry line. For a live interval it carries that
@@ -243,7 +254,7 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 		// Cumulative, for the end-of-run summary.
 		t.latest[key] = FlowSample{
 			Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To, Datapath: p.Datapath,
-			Bytes: s.GetBytes(), Packets: s.GetPackets(),
+			Bytes: s.GetBytes(), Packets: s.GetPackets(), TCP: tcpStatsOf(s.GetTcp()),
 		}
 		// Fold a full interval's delta into its bucket. The final (trailing partial)
 		// sample carries index -1 and is accounted only in the cumulative totals.
@@ -252,6 +263,18 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 		}
 		t.mu.Unlock()
 		t.tryEmit(time.Now())
+	}
+}
+
+// tcpStatsOf converts a proto TcpInfo (nil for non-TCP samples) to a TCPStats.
+func tcpStatsOf(ti *loomv1.TcpInfo) *TCPStats {
+	if ti == nil {
+		return nil
+	}
+	return &TCPStats{
+		Retrans: ti.GetTotalRetrans(), Lost: ti.GetLost(),
+		RttUs: ti.GetRttUs(), RttvarUs: ti.GetRttvarUs(),
+		Cwnd: ti.GetSndCwnd(), Ssthresh: ti.GetSndSsthresh(),
 	}
 }
 

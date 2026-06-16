@@ -102,6 +102,41 @@ func TestAggregateSummary(t *testing.T) {
 	}
 }
 
+func TestSummaryLossAndTCPDiagnostics(t *testing.T) {
+	// UDP with drops: packet-loss line with count + percentage.
+	udp := Aggregate{
+		TxBytes: 1000, RxBytes: 900, TxPackets: 100, RxPackets: 90,
+		Flows: []FlowSample{
+			{Event: "blast", Role: Sender, Datapath: "udp", From: "c", To: "s", Bytes: 1000, Packets: 100},
+			{Event: "blast", Role: Receiver, Datapath: "udp", From: "c", To: "s", Bytes: 900, Packets: 90},
+		},
+	}
+	out := udp.Summary("u", time.Second, false, false)
+	if !strings.Contains(out, "loss") || !strings.Contains(out, "10 of 100 packets") || !strings.Contains(out, "10.00%") {
+		t.Errorf("udp loss line wrong: %q", out)
+	}
+	if strings.Contains(out, "tcp ") {
+		t.Errorf("udp summary should not show a tcp line: %q", out)
+	}
+
+	// TCP: byte-loss (≈0) plus a tcp diagnostics line from the sender's stats.
+	tcp := Aggregate{
+		TxBytes: 1000, RxBytes: 1000,
+		Flows: []FlowSample{
+			{Event: "stream", Role: Sender, Datapath: "tcp", From: "c", To: "s", Bytes: 1000,
+				TCP: &TCPStats{Retrans: 12, Lost: 1, RttUs: 420, RttvarUs: 80, Cwnd: 76, Ssthresh: 1 << 31}},
+			{Event: "stream", Role: Receiver, Datapath: "tcp", From: "c", To: "s", Bytes: 1000},
+		},
+	}
+	out = tcp.Summary("t", time.Second, false, false)
+	if !strings.Contains(out, "tcp ") || !strings.Contains(out, "retrans 12") || !strings.Contains(out, "cwnd 76") {
+		t.Errorf("tcp diagnostics line missing/wrong: %q", out)
+	}
+	if !strings.Contains(out, "ssthresh ∞") { // INT_MAX during slow start renders as ∞
+		t.Errorf("large ssthresh should render as ∞: %q", out)
+	}
+}
+
 func TestTextObserverPerFlow(t *testing.T) {
 	a := Aggregate{
 		At:           time.Now(),

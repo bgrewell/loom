@@ -170,4 +170,17 @@ message TelemetrySample {
   uint64 interval_packets = 8; // delta packets during interval k
   int64 interval_nanos = 9;    // measured elapsed ns of interval k (rate = interval_bytes*8/interval_nanos)
   bool final = 10;             // true on the completion sample (trailing partial interval)
+  TcpInfo tcp = 11;            // sender-side TCP_INFO diagnostics (nil for non-TCP datapaths)
+}
+
+// TcpInfo carries a snapshot of the sender socket's kernel TCP_INFO, for link
+// profiling (is TCP entering a bad state?). Populated only for the TCP datapath
+// on the sending side; zero/absent otherwise.
+message TcpInfo {
+  uint32 total_retrans = 1; // cumulative retransmitted segments
+  uint32 lost = 2;          // segments currently considered lost
+  uint32 rtt_us = 3;        // smoothed round-trip time (microseconds)
+  uint32 rttvar_us = 4;     // round-trip time variance (microseconds)
+  uint32 snd_cwnd = 5;      // congestion window (segments)
+  uint32 snd_ssthresh = 6;  // slow-start threshold (segments)
 }
