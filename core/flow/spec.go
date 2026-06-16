@@ -30,6 +30,9 @@ type Spec struct {
 	Duration   time.Duration
 	Count      uint64
 	Volume     uint64
+	// Frame carries L2/L3/L4 addressing for the "ethernet" generator (raw
+	// datapaths such as AF_XDP). Nil for stack-based datapaths.
+	Frame *generator.FrameOptions
 }
 
 // Build constructs a Flow from a Spec, resolving the generator, scheduler, and
@@ -45,6 +48,7 @@ func Build(spec Spec, c *components.Components) (*Flow, error) {
 	gen, err := c.Generators.Build(gname, generator.Options{
 		Payload:    spec.Payload,
 		PacketSize: spec.PacketSize,
+		Frame:      spec.Frame,
 	})
 	if err != nil {
 		return nil, err
