@@ -1,0 +1,32 @@
+# Quickstart / proof of life: a tiny 3s UDP flow to confirm a loom setup works.
+#
+# This is the one example meant to run on a single machine: start two agents on
+# different ports and point both endpoints at localhost. Every other example is
+# written for two hosts (client and server on separate machines).
+#
+# Single host (two agents):
+#   LOOMD_ADDR=:9551 loomd &   LOOMD_ADDR=:9552 loomd &
+#   loomctl run -f quickstart.scenario.yaml \
+#     -a 'client=127.0.0.1:9551,server=127.0.0.1:9552' --live
+#
+# A non-zero rx in the summary means the path works end to end.
+scenario: quickstart
+description: minimal 3s UDP proof-of-life flow
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: ping
+    flow:
+      kind: udp
+      packet_size: 1400
+      rate: 50Mbps
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 3s

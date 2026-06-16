@@ -1,0 +1,33 @@
+# Emulation: VoIP call — constant-bit-rate UDP, one media frame per packetization
+# interval, the shape of an RTP audio stream.
+#
+# `voip-call` is a push emulation over UDP: the codec sets the bitrate and `ptime`
+# the frame interval, so the frame size is bitrate x ptime (g711 at 20ms = 160 B).
+# Run several at once (copy the event) to model a trunk of concurrent calls.
+#
+# Knobs (flow params): codec (g711|g729|opus), ptime (e.g. "20ms"),
+# frame_size (override), duration (or use stop.after).
+#
+# Run:
+#   loomctl run -f emul-voip-call.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: emul-voip-call
+description: one G.711 VoIP call (CBR UDP, 20ms frames), client -> server, 30s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: call
+    flow:
+      kind: voip-call
+      codec: g711
+      ptime: 20ms
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 30s

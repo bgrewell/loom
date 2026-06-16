@@ -48,6 +48,12 @@ archives:
     files:
       - LICENSE
       - README.md
+      # Example scenarios, bundled at examples/ in the archive (scripts/install.sh
+      # also fetches them to /usr/share/loom/examples on install).
+      - src: docs/examples/*.scenario.yaml
+        dst: examples
+      - src: docs/examples/README.md
+        dst: examples
 
 checksum:
   name_template: checksums.txt

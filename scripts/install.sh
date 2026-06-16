@@ -15,6 +15,9 @@
 #                       0/no to skip. Unset = prompt on a terminal, skip when piped.
 #   LOOM_SERVICE_ADDR   LOOMD_ADDR for the service (default ":9551")
 #   LOOM_SERVICE_TOKEN  LOOMD_TOKEN for the service (default: none)
+#   LOOM_EXAMPLES       install example scenarios: 1/yes (default) or 0/no
+#   LOOM_EXAMPLES_DIR   where to install them (default: /usr/share/loom/examples
+#                       as root, else $XDG_DATA_HOME/loom/examples)
 set -euo pipefail
 
 REPO="bgrewell/loom"
@@ -99,6 +102,54 @@ else
 	warn "no prebuilt release found for ${RESOLVED:-latest}; building from source"
 	install_from_source
 fi
+
+# --- example scenarios ---
+choose_exampledir() {
+	if [ -n "${LOOM_EXAMPLES_DIR:-}" ]; then echo "$LOOM_EXAMPLES_DIR" && return; fi
+	if [ "$(id -u)" -eq 0 ]; then echo /usr/share/loom/examples && return; fi
+	echo "${XDG_DATA_HOME:-$HOME/.local/share}/loom/examples"
+}
+
+# install_examples fetches the docs/examples scenarios for the installed ref and
+# drops them in the examples dir. Best-effort: a failure warns but never aborts
+# the install (the binaries are what matter).
+# fetch_examples extracts docs/examples from the repo at ref into $1 (a dir),
+# echoing the source path on success. Returns non-zero if the ref has no examples.
+fetch_examples() {
+	local ref="$1" tmp="$2" src
+	curl -fsSL "https://github.com/$REPO/archive/$ref.tar.gz" -o "$tmp/$ref.tgz" 2>/dev/null || return 1
+	tar -xzf "$tmp/$ref.tgz" -C "$tmp" 2>/dev/null || return 1
+	# The codeload archive extracts to loom-<ref>/docs/examples.
+	src="$(find "$tmp" -type d -path '*/docs/examples' 2>/dev/null | head -1)"
+	[ -n "$src" ] && ls "$src"/*.scenario.yaml >/dev/null 2>&1 || return 1
+	echo "$src"
+}
+
+install_examples() {
+	local dir tmp src
+	dir="$(choose_exampledir)"
+	tmp="$(mktemp -d)" || return 1
+	trap 'rm -rf "$tmp"' RETURN
+	# Prefer the installed version, but fall back to main so installs of an older
+	# release (whose tag predates these files) still get the current examples.
+	src="$(fetch_examples "${RESOLVED:-main}" "$tmp")" ||
+		src="$(fetch_examples main "$tmp")" || {
+		warn "could not fetch example scenarios"
+		return 1
+	}
+	mkdir -p "$dir" 2>/dev/null || {
+		warn "cannot create $dir (try sudo, or set LOOM_EXAMPLES_DIR) — skipping examples"
+		return 1
+	}
+	install -m 0644 "$src"/*.scenario.yaml "$dir"/ 2>/dev/null || return 1
+	[ -f "$src/README.md" ] && install -m 0644 "$src/README.md" "$dir"/ 2>/dev/null
+	info "installed example scenarios → $dir"
+}
+
+case "${LOOM_EXAMPLES:-1}" in
+0 | no | NO | false | FALSE) ;;
+*) install_examples || true ;;
+esac
 
 # --- optional: install loomd as a systemd service (skip the `loomd &` dance) ---
 UNIT_PATH=/etc/systemd/system/loomd.service

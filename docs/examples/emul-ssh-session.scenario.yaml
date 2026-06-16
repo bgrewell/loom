@@ -1,0 +1,35 @@
+# Emulation: SSH session — interactive keystrokes (tiny sends with inter-key
+# timing) followed by an optional bulk transfer (scp), over TCP.
+#
+# `ssh-session` is a push emulation: it sends `keys` small writes spaced by
+# `interkey`, then an optional `bulk` transfer. Models the spiky, latency-sensitive
+# shape of an interactive shell plus a file copy.
+#
+# Knobs (flow params): keys, key_size (e.g. "1..64"), interkey (e.g. "80ms..300ms"),
+# bulk (size of the trailing transfer; default 0 = none).
+#
+# Run:
+#   loomctl run -f emul-ssh-session.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: emul-ssh-session
+description: interactive SSH keystrokes then a 50 MB scp, client -> server
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: session
+    flow:
+      kind: ssh-session
+      keys: 200
+      key_size: 1..64
+      interkey: 80ms..300ms
+      bulk: 50MB
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 30s

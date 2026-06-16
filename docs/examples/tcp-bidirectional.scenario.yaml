@@ -1,0 +1,39 @@
+# TCP bidirectional: simultaneous up and down streams between the same two hosts.
+#
+# Two events run at once: `up` (client -> server) and `down` (server -> client).
+# Each is an independent TCP stream, so this exercises full-duplex behavior. In
+# the live view each direction is a separate, labeled line:
+#   [t] up    client->server  tx ...  rx ...
+#   [t] down  server->client  tx ...  rx ...
+#
+# Run:
+#   loomctl run -f tcp-bidirectional.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: tcp-bidirectional
+description: simultaneous TCP up (client->server) and down (server->client), 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: up
+    flow:
+      kind: tcp
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 10s
+
+  - name: down
+    flow:
+      kind: tcp
+    datapath: tcp
+    from: server
+    to: client
+    start: 0s
+    stop:
+      after: 10s

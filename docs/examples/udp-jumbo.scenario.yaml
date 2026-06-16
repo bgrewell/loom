@@ -1,0 +1,30 @@
+# UDP jumbo frames: large 8900-byte datagrams at a fixed rate.
+#
+# Exercises a jumbo-frame path (MTU 9000). Larger datagrams mean fewer packets
+# per second for the same bitrate, so per-packet overhead drops and throughput
+# usually climbs — provided every hop carries a 9000-byte MTU. If a hop doesn't,
+# expect IP fragmentation or drops (visible as rx << tx in the summary).
+#
+# Run (ensure the path MTU is >= 9000 end to end):
+#   loomctl run -f udp-jumbo.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: udp-jumbo
+description: jumbo (8900-byte) UDP datagrams at 5 Gbps, client -> server, 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: jumbo
+    flow:
+      kind: udp
+      packet_size: 8900
+      rate: 5Gbps
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 10s

@@ -1,0 +1,31 @@
+# Emulation: Prometheus remote-write — periodic batched POSTs at the scrape
+# interval, the shape of a metrics agent shipping samples to a remote store.
+#
+# `prometheus-sender` is a push emulation over TCP: every `scrape` interval it
+# sends one `batch_size` payload. Models steady, periodic telemetry egress.
+#
+# Knobs (flow params): scrape (interval, e.g. "15s"), batch_size (e.g. "64KB").
+#
+# Run:
+#   loomctl run -f emul-prometheus-remote-write.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: emul-prometheus-remote-write
+description: periodic Prometheus remote-write batches, client -> server, 2m
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: remote-write
+    flow:
+      kind: prometheus-sender
+      scrape: 15s
+      batch_size: 64KB
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 2m

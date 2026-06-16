@@ -1,0 +1,29 @@
+# TCP rate-limited: a TCP stream paced to a target rate (1 Gbps) instead of
+# running flat out.
+#
+# The `rate` flow param caps the offered load; loom paces the sender to hold it.
+# Useful to model a constrained application or to leave headroom on a shared link.
+# Try changing `rate` (e.g. "100Mbps", "5Gbps") and watch the live rate track it.
+#
+# Run:
+#   loomctl run -f tcp-rate-limited.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: tcp-rate-limited
+description: one TCP stream paced to 1 Gbps, client -> server, 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: stream
+    flow:
+      kind: tcp
+      rate: 1Gbps
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 10s

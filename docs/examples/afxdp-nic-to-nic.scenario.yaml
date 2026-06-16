@@ -1,0 +1,39 @@
+# AF_XDP cross-host: a kernel-bypass flow over real NICs on two machines.
+#
+# `datapath: afxdp` sends raw layer-2 frames straight to/from the NIC, bypassing
+# the kernel stack for the highest packet rates. Each endpoint's `iface` (and
+# optional `queue`) names the NIC that endpoint drives; the sender resolves the
+# peer's MAC via ARP (both NICs must be on the same L2 segment).
+#
+# Requirements:
+#   - loomd built with the afxdp tag (released loomd already is); a plain
+#     `go build` loomd returns InvalidArgument for `datapath: afxdp`.
+#   - root on each agent host, and an XDP-capable NIC driver.
+#   - the two NICs on the same subnet so ARP resolves (e.g. 10.0.0.0/24).
+#
+# Run (agents started as root on each host):
+#   loomctl run -f afxdp-nic-to-nic.scenario.yaml \
+#     -a 'tx=10.0.0.1:9551,rx=10.0.0.2:9551' --live
+scenario: afxdp-nic-to-nic
+description: one AF_XDP flow from tx's NIC to rx's NIC across two hosts
+seed: 1
+
+endpoints:
+  - name: tx
+    iface: eth0
+    address: 10.0.0.1
+  - name: rx
+    iface: eth0
+    address: 10.0.0.2
+
+timeline:
+  - name: blast
+    flow:
+      kind: udp
+      packet_size: 1400
+    datapath: afxdp
+    from: tx
+    to: rx
+    start: 0s
+    stop:
+      after: 10s
