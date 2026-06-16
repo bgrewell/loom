@@ -5,6 +5,7 @@ package flow
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -13,6 +14,36 @@ import (
 	"github.com/bgrewell/loom/core/payload"
 	"github.com/bgrewell/loom/core/scheduler"
 )
+
+// TestBuildTCPDecouplesBlockFromPacketSize: a TCP flow ignores the (wire-
+// meaningless) packet_size for its write granularity and uses the large
+// tcpWriteBlock, so throughput isn't throttled to MTU-sized writes. A non-TCP
+// datapath keeps packet_size as its frame size.
+func TestBuildTCPDecouplesBlockFromPacketSize(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	tcp, err := Build(Spec{Datapath: "tcp", Target: ln.Addr().String(), PacketSize: 1400}, nil)
+	if err != nil {
+		t.Fatalf("build tcp: %v", err)
+	}
+	defer tcp.Datapath.Close()
+	if tcp.MTU != tcpWriteBlock {
+		t.Errorf("tcp block = %d, want %d (decoupled from packet_size 1400)", tcp.MTU, tcpWriteBlock)
+	}
+
+	udp, err := Build(Spec{Datapath: "udp", Target: "127.0.0.1:9", PacketSize: 1400}, nil)
+	if err != nil {
+		t.Fatalf("build udp: %v", err)
+	}
+	defer udp.Datapath.Close()
+	if udp.MTU != 1400 {
+		t.Errorf("udp block = %d, want 1400 (packet_size preserved)", udp.MTU)
+	}
+}
 
 func newStream(size int) generator.Generator {
 	return generator.NewStream(payload.NewRandom(2048, 1), size)

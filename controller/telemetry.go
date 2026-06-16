@@ -28,11 +28,16 @@ type FlowSample struct {
 
 // Aggregate is a consolidated telemetry line. For a live interval it carries that
 // interval's tx/rx deltas, rates, the interval Index, and how many of the event's
-// flows contributed (Sources of Expected; Complete when all reported). For the
-// end-of-run Snapshot, Tx/RxBytes are cumulative totals.
+// flows contributed (Sources of Expected; Complete when all reported). Event and
+// From/To name the directional stream the line belongs to, so concurrent flows
+// (bidir, N-way) render as distinguishable, labeled lines. For the end-of-run
+// Snapshot, Tx/RxBytes are cumulative totals.
 type Aggregate struct {
 	At           time.Time
 	Index        int64
+	Event        string
+	From         string
+	To           string
 	TxBitsPerSec float64
 	RxBitsPerSec float64
 	TxBytes      uint64
@@ -247,7 +252,15 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 
 // foldLocked adds one flow's interval-k delta to its bucket. Caller holds t.mu.
 func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
-	bk := bucketKey{event: p.Event, index: s.GetIntervalIndex()}
+	idx := s.GetIntervalIndex()
+	if idx < t.nextIndex[p.Event] {
+		// This interval was already emitted (a straggler arriving after the line
+		// went out). Its bytes are still in the cumulative total via latest; don't
+		// resurrect a bucket the emit loop will never revisit (that would leak and,
+		// for a receiver-only straggler, be dropped anyway).
+		return
+	}
+	bk := bucketKey{event: p.Event, index: idx}
 	b := t.buckets[bk]
 	if b == nil {
 		b = &bucket{reported: make(map[string]bool), flows: make(map[string]FlowSample), firstSeen: time.Now()}
@@ -276,26 +289,46 @@ func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
 	}
 }
 
-// tryEmit flushes every event's pending intervals that are complete (all expected
-// flows reported) or past the lateness bound, in index order. Lines that flush
-// incomplete carry Sources<Expected so the display can flag a lagging node; the
-// authoritative totals come from the summary.
+// eventMeta describes an event's placed flows: how many to expect, their global
+// keys (to test against ended/reported), and the directional endpoints for the
+// line label.
+type eventMeta struct {
+	expected int
+	flowKeys []string
+	from, to string
+}
+
+// tryEmit flushes every event's pending intervals in index order. An interval is
+// emitted once every placed flow has *settled* it — reported the interval or ended
+// its stream (so it never will) — which is the watermark: we wait for a slow but
+// live receiver instead of flushing it out as rx 0. A generous backstop still
+// flushes an interval whose contributor went silent without ending, so one stuck
+// node can't stall the live view forever; such a line carries Sources<Expected so
+// the display flags it, and the summary remains authoritative.
 func (t *Telemetry) tryEmit(now time.Time) {
-	expected := t.expectedByEvent()
+	meta := t.eventMetaByEvent()
+	backstop := t.latenessBackstop()
 
 	t.mu.Lock()
 	var out []Aggregate
 	for event := range t.events {
+		em := meta[event]
 		for {
 			k := t.nextIndex[event]
 			b, ok := t.buckets[bucketKey{event, k}]
 			if !ok {
 				break
 			}
-			exp := expected[event]
-			complete := exp > 0 && len(b.reported) >= exp
-			late := now.Sub(b.firstSeen) >= t.interval
-			if !complete && !late {
+			settled := 0
+			for _, key := range em.flowKeys {
+				if b.reported[key] || t.ended[key] {
+					settled++
+				}
+			}
+			complete := em.expected > 0 && len(b.reported) >= em.expected
+			allSettled := em.expected > 0 && settled >= em.expected
+			stuck := now.Sub(b.firstSeen) >= backstop
+			if !complete && !allSettled && !stuck {
 				break
 			}
 			delete(t.buckets, bucketKey{event, k})
@@ -309,7 +342,9 @@ func (t *Telemetry) tryEmit(now time.Time) {
 			if !complete {
 				t.incomplete = true
 			}
-			out = append(out, aggFromBucket(now, k, b, exp, complete))
+			a := aggFromBucket(now, k, b, em.expected, complete)
+			a.Event, a.From, a.To = event, em.from, em.to
+			out = append(out, a)
 		}
 	}
 	obs := t.observers
@@ -322,19 +357,36 @@ func (t *Telemetry) tryEmit(now time.Time) {
 	}
 }
 
-// expectedByEvent counts how many flows each event has placed (its expected number
-// of interval contributors). Computed outside t.mu (Placed takes the controller's
-// lock).
-func (t *Telemetry) expectedByEvent() map[string]int {
+// latenessBackstop is how long an interval waits for a contributor that has
+// neither reported nor ended before it is flushed incomplete. It is deliberately
+// several intervals: a live-but-slow receiver should be waited for (the watermark),
+// not flushed to rx 0; the backstop only rescues the live view from a node that
+// has gone silent mid-stream without its telemetry stream ending.
+func (t *Telemetry) latenessBackstop() time.Duration {
+	if d := 3 * t.interval; d > 2*time.Second {
+		return d
+	}
+	return 2 * time.Second
+}
+
+// eventMetaByEvent gathers each event's placed flow keys and directional endpoints.
+// Computed outside t.mu (Placed takes the controller's lock).
+func (t *Telemetry) eventMetaByEvent() map[string]eventMeta {
 	t.mu.Lock()
 	src := t.src
 	t.mu.Unlock()
-	out := make(map[string]int)
+	out := make(map[string]eventMeta)
 	if src == nil {
 		return out
 	}
 	for _, p := range src.Placed() {
-		out[p.Event]++
+		em := out[p.Event]
+		em.expected++
+		em.flowKeys = append(em.flowKeys, p.Key())
+		if em.from == "" {
+			em.from, em.to = p.From, p.To
+		}
+		out[p.Event] = em
 	}
 	return out
 }

@@ -65,13 +65,18 @@ func (r Role) String() string {
 }
 
 // Placed is one configured flow on an agent. FlowIDs are only unique per agent,
-// so AgentAddr+FlowID is the global key.
+// so AgentAddr+FlowID is the global key. From/To are the event's source and
+// destination endpoint names, so telemetry can label a consolidated line with its
+// direction (e.g. "client→server") — essential once a scenario runs several
+// concurrent flows (bidir, N-way) whose lines would otherwise be indistinguishable.
 type Placed struct {
 	Agent     loomv1.ControlClient
 	AgentAddr string
 	FlowID    string
 	Role      Role
 	Event     string
+	From      string
+	To        string
 }
 
 // Key uniquely identifies a placed flow across agents.
@@ -238,10 +243,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return c.fireRequestResponse(ctx, ev, from, to, fromAgent, fromAddr, toAgent, toAddr)
 	}
 
-	dp := ev.Datapath
-	if dp == "" {
-		dp = "udp"
-	}
+	dp := eventDatapath(ev)
 
 	// Configure the receiver first (its ephemeral port targets the sender). A UDP
 	// listener returns a data port; a NIC-bound datapath (afxdp) uses iface/queue.
@@ -280,11 +282,11 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 	if _, err := toAgent.Start(ctx, c.startReq(rxCfg.GetFlowId(), to.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start receiver: %w", ev.Name, err)
 	}
-	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name)
+	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name, from.Name, to.Name)
 	if _, err := fromAgent.Start(ctx, c.startReq(txCfg.GetFlowId(), from.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start sender: %w", ev.Name, err)
 	}
-	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name)
+	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name, from.Name, to.Name)
 	return nil
 }
 
@@ -314,7 +316,7 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 	if _, err := toAgent.Start(ctx, c.startReq(respCfg.GetFlowId(), to.Name, time.Time{})); err != nil {
 		return fmt.Errorf("event %q: start responder: %w", ev.Name, err)
 	}
-	c.track(toAgent, toAddr, respCfg.GetFlowId(), Responder, ev.Name)
+	c.track(toAgent, toAddr, respCfg.GetFlowId(), Responder, ev.Name, from.Name, to.Name)
 
 	// Requester on the source agent, dialing the responder's data address.
 	dataHost := to.Address
@@ -330,7 +332,7 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 	if _, err := fromAgent.Start(ctx, c.startReq(reqCfg.GetFlowId(), from.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start requester: %w", ev.Name, err)
 	}
-	c.track(fromAgent, fromAddr, reqCfg.GetFlowId(), Requester, ev.Name)
+	c.track(fromAgent, fromAddr, reqCfg.GetFlowId(), Requester, ev.Name, from.Name, to.Name)
 	return nil
 }
 
@@ -391,10 +393,10 @@ func (c *Controller) startAtFor(endpoint string, gate time.Time) int64 {
 	return gate.Add(off).UnixNano()
 }
 
-func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Role, event string) {
+func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Role, event, from, to string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.placed = append(c.placed, Placed{Agent: agent, AgentAddr: addr, FlowID: id, Role: role, Event: event})
+	c.placed = append(c.placed, Placed{Agent: agent, AgentAddr: addr, FlowID: id, Role: role, Event: event, From: from, To: to})
 }
 
 // senderSpec builds the sender's FlowSpec from an event, the chosen datapath,
@@ -483,6 +485,23 @@ func stringParams(p map[string]any) map[string]string {
 		out[k] = fmt.Sprint(v)
 	}
 	return out
+}
+
+// eventDatapath resolves an event's datapath. The canonical place is the
+// event-level `datapath:` field, but `packet_size` and other knobs live under
+// `flow:`, so authors naturally put `datapath:` there too — accept it as a
+// fallback rather than silently running UDP (which made `datapath: tcp` under
+// `flow:` quietly send UDP datagrams). Event-level wins when both are set.
+func eventDatapath(ev scenario.Event) string {
+	if ev.Datapath != "" {
+		return ev.Datapath
+	}
+	if v, ok := ev.Flow.Params["datapath"]; ok {
+		if s := fmt.Sprint(v); s != "" {
+			return s
+		}
+	}
+	return "udp"
 }
 
 func packetSize(ev scenario.Event) int {

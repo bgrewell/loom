@@ -27,6 +27,12 @@ func (c *capture) Observe(a Aggregate) {
 	c.mu.Unlock()
 }
 
+func (c *capture) len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.aggs)
+}
+
 func sample(idx int64, bytes uint64) *loomv1.TelemetrySample {
 	return &loomv1.TelemetrySample{
 		IntervalIndex: idx, IntervalBytes: bytes, IntervalPackets: bytes / 1400,
@@ -34,59 +40,112 @@ func sample(idx int64, bytes uint64) *loomv1.TelemetrySample {
 	}
 }
 
-// TestAggregatorCompletenessAndLateness drives the index-keyed watermark directly:
-// an interval emits once both flows report it (complete), and a straggler interval
-// flushes incomplete only after the lateness bound.
-func TestAggregatorCompletenessAndLateness(t *testing.T) {
-	tx := Placed{AgentAddr: "a", FlowID: "1", Role: Sender, Event: "e"}
-	rx := Placed{AgentAddr: "b", FlowID: "1", Role: Receiver, Event: "e"}
-
+func newAgg(t *testing.T) (*Telemetry, Placed, Placed, *capture) {
+	t.Helper()
+	tx := Placed{AgentAddr: "a", FlowID: "1", Role: Sender, Event: "e", From: "client", To: "server"}
+	rx := Placed{AgentAddr: "b", FlowID: "1", Role: Receiver, Event: "e", From: "client", To: "server"}
 	tel := NewTelemetry(100 * time.Millisecond)
 	tel.src = fakePlaced{flows: []Placed{tx, rx}}
 	cap := &capture{}
 	tel.AddObserver(cap)
+	return tel, tx, rx, cap
+}
 
-	fold := func(p Placed, s *loomv1.TelemetrySample) {
-		tel.mu.Lock()
-		tel.foldLocked(p, s)
-		tel.mu.Unlock()
-	}
+func (t *Telemetry) fold(p Placed, s *loomv1.TelemetrySample) {
+	t.mu.Lock()
+	t.foldLocked(p, s)
+	t.mu.Unlock()
+}
 
-	// Interval 0: both report → completes and emits on the next tryEmit.
-	fold(tx, sample(0, 1_000_000))
-	fold(rx, sample(0, 990_000))
+// TestAggregatorWaitsForLiveStraggler is the core anti-"rx 0" guarantee: when one
+// flow reports an interval and the other is still alive but slow, the watermark
+// waits for it rather than flushing the interval out with the missing side at zero.
+// When the straggler finally reports, the interval emits complete with both sides.
+func TestAggregatorWaitsForLiveStraggler(t *testing.T) {
+	tel, tx, rx, cap := newAgg(t)
+
+	// Interval 0: both report → completes and emits, labeled with event/direction.
+	tel.fold(tx, sample(0, 1_000_000))
+	tel.fold(rx, sample(0, 990_000))
 	tel.tryEmit(time.Now())
 
-	// Interval 1: only the sender reports → not complete, not yet late → no emit.
-	fold(tx, sample(1, 1_000_000))
-	tel.tryEmit(time.Now())
-
-	cap.mu.Lock()
-	n := len(cap.aggs)
-	cap.mu.Unlock()
-	if n != 1 {
-		t.Fatalf("after one complete + one partial interval, emitted %d lines, want 1", n)
+	// Interval 1: only the sender reports. The receiver is alive (its stream has not
+	// ended) and we are within the backstop → no premature flush.
+	tel.fold(tx, sample(1, 1_000_000))
+	tel.tryEmit(time.Now().Add(300 * time.Millisecond)) // past the old 1-interval bound
+	if n := cap.len(); n != 1 {
+		t.Fatalf("a live straggler must not be flushed to rx 0: emitted %d lines, want 1", n)
 	}
 
-	// Past the lateness bound, the straggler interval flushes incomplete.
-	tel.tryEmit(time.Now().Add(200 * time.Millisecond))
+	// The receiver finally reports interval 1 (late but alive) → completes with rx.
+	tel.fold(rx, sample(1, 980_000))
+	tel.tryEmit(time.Now().Add(400 * time.Millisecond))
 
 	cap.mu.Lock()
 	defer cap.mu.Unlock()
 	if len(cap.aggs) != 2 {
-		t.Fatalf("after lateness flush, emitted %d lines, want 2", len(cap.aggs))
+		t.Fatalf("after the straggler reported, emitted %d lines, want 2", len(cap.aggs))
 	}
 	first, second := cap.aggs[0], cap.aggs[1]
-	if !first.Complete || first.Index != 0 || first.Sources != 2 || first.Expected != 2 {
-		t.Errorf("interval 0 = %+v, want complete index0 2/2", first)
+	if first.Event != "e" || first.From != "client" || first.To != "server" {
+		t.Errorf("line not labeled with event/direction: %+v", first)
 	}
-	if first.TxBytes != 1_000_000 || first.RxBytes != 990_000 {
-		t.Errorf("interval 0 tx/rx = %d/%d, want 1000000/990000", first.TxBytes, first.RxBytes)
+	if !first.Complete || first.Index != 0 || first.TxBytes != 1_000_000 || first.RxBytes != 990_000 {
+		t.Errorf("interval 0 = %+v, want complete index0 tx1000000 rx990000", first)
 	}
-	if second.Complete || second.Index != 1 || second.Sources != 1 || second.Expected != 2 {
-		t.Errorf("interval 1 = %+v, want incomplete index1 1/2", second)
+	if !second.Complete || second.Index != 1 || second.RxBytes != 980_000 {
+		t.Errorf("interval 1 = %+v, want complete index1 rx980000 (not dropped)", second)
+	}
+	if tel.LiveIncomplete() {
+		t.Error("no interval flushed incomplete; LiveIncomplete should be false")
+	}
+}
+
+// TestAggregatorSettlesOnEndedFlow: a missing contributor whose telemetry stream
+// has ended will never report, so the interval flushes immediately (incomplete)
+// without waiting for the backstop.
+func TestAggregatorSettlesOnEndedFlow(t *testing.T) {
+	tel, tx, rx, cap := newAgg(t)
+
+	tel.fold(tx, sample(0, 1_000_000)) // only the sender reports interval 0
+	tel.mu.Lock()
+	tel.ended[rx.Key()] = true // the receiver's stream ended without reporting it
+	tel.mu.Unlock()
+	tel.tryEmit(time.Now()) // settles now: every flow has reported-or-ended
+
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.aggs) != 1 {
+		t.Fatalf("ended straggler should settle immediately: emitted %d, want 1", len(cap.aggs))
+	}
+	a := cap.aggs[0]
+	if a.Complete || a.Index != 0 || a.Sources != 1 || a.Expected != 2 || a.TxBytes != 1_000_000 {
+		t.Errorf("interval 0 = %+v, want incomplete index0 1/2 tx1000000", a)
 	}
 	if !tel.LiveIncomplete() {
 		t.Error("LiveIncomplete should be true after an incomplete flush")
+	}
+}
+
+// TestAggregatorBackstopFlush: a contributor that goes silent without ending (no
+// further reports, stream still open) cannot stall the live view forever — the
+// interval flushes incomplete once the backstop elapses.
+func TestAggregatorBackstopFlush(t *testing.T) {
+	tel, tx, _, cap := newAgg(t)
+
+	tel.fold(tx, sample(0, 1_000_000)) // only the sender reports
+	tel.tryEmit(time.Now())            // within the backstop → wait
+	if n := cap.len(); n != 0 {
+		t.Fatalf("within the backstop, nothing should flush yet: emitted %d, want 0", n)
+	}
+
+	tel.tryEmit(time.Now().Add(2500 * time.Millisecond)) // past the backstop
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.aggs) != 1 {
+		t.Fatalf("after the backstop, emitted %d lines, want 1", len(cap.aggs))
+	}
+	if a := cap.aggs[0]; a.Complete || a.Sources != 1 {
+		t.Errorf("backstop line = %+v, want incomplete 1/2", a)
 	}
 }
