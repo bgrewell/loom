@@ -76,6 +76,49 @@ func TestUDPSocketLoopback(t *testing.T) {
 	}
 }
 
+// TestUDPSocketBatch sends a multi-datagram batch in one TxCommit (one sendmmsg)
+// and checks every datagram arrives — exercising the batched send path (#56).
+func TestUDPSocketBatch(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer pc.Close()
+
+	s, err := DialUDP(pc.LocalAddr().String(), 1500)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer s.Close()
+
+	const batch = 16
+	tx := s.TxReserve(batch)
+	if len(tx) < batch {
+		t.Fatalf("TxReserve = %d, want %d", len(tx), batch)
+	}
+	for i := 0; i < batch; i++ {
+		tx[i].Len = copy(tx[i].Data, []byte{byte(i), 'x', 'y', 'z'})
+	}
+	if sent, err := s.TxCommit(tx[:batch]); err != nil || sent != batch {
+		t.Fatalf("TxCommit = (%d, %v), want %d sent in one sendmmsg", sent, err, batch)
+	}
+
+	// All datagrams must be received (loopback is reliable for a small burst).
+	seen := 0
+	buf := make([]byte, 64)
+	for seen < batch {
+		_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, _, rerr := pc.ReadFrom(buf)
+		if rerr != nil {
+			t.Fatalf("after %d datagrams: %v", seen, rerr)
+		}
+		if n != 4 {
+			t.Fatalf("datagram %d had %d bytes, want 4", seen, n)
+		}
+		seen++
+	}
+}
+
 func TestUDPListenerReceives(t *testing.T) {
 	l, err := ListenUDP("127.0.0.1:0", 1500)
 	if err != nil {
