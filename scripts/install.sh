@@ -71,7 +71,10 @@ install_from_release() {
 	trap 'rm -rf "$tmp"' RETURN
 	info "fetching $url"
 	curl -fsSL "$url" -o "$tmp/loom.tgz" 2>/dev/null || return 1
-	tar -xzf "$tmp/loom.tgz" -C "$tmp" 2>/dev/null || return 1
+	# Don't hard-fail on tar's exit: a non-binary entry in the archive (e.g. a
+	# bundled examples/ dir) can make tar warn while the binaries still extract.
+	# The per-binary check below is the real gate.
+	tar -xzf "$tmp/loom.tgz" -C "$tmp" 2>/dev/null || true
 	for b in "${BINS[@]}"; do
 		[ -f "$tmp/$b" ] || return 1
 	done
