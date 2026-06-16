@@ -113,22 +113,28 @@ choose_exampledir() {
 # install_examples fetches the docs/examples scenarios for the installed ref and
 # drops them in the examples dir. Best-effort: a failure warns but never aborts
 # the install (the binaries are what matter).
-install_examples() {
-	local dir ref url tmp src
-	dir="$(choose_exampledir)"
-	ref="${RESOLVED:-main}" # match the installed version; fall back to main for source/latest
-	url="https://github.com/$REPO/archive/$ref.tar.gz"
-	tmp="$(mktemp -d)" || return 1
-	trap 'rm -rf "$tmp"' RETURN
-	curl -fsSL "$url" -o "$tmp/src.tgz" 2>/dev/null || {
-		warn "could not fetch example scenarios ($ref)"
-		return 1
-	}
-	tar -xzf "$tmp/src.tgz" -C "$tmp" 2>/dev/null || return 1
+# fetch_examples extracts docs/examples from the repo at ref into $1 (a dir),
+# echoing the source path on success. Returns non-zero if the ref has no examples.
+fetch_examples() {
+	local ref="$1" tmp="$2" src
+	curl -fsSL "https://github.com/$REPO/archive/$ref.tar.gz" -o "$tmp/$ref.tgz" 2>/dev/null || return 1
+	tar -xzf "$tmp/$ref.tgz" -C "$tmp" 2>/dev/null || return 1
 	# The codeload archive extracts to loom-<ref>/docs/examples.
 	src="$(find "$tmp" -type d -path '*/docs/examples' 2>/dev/null | head -1)"
-	[ -n "$src" ] || {
-		warn "example scenarios not found in $ref"
+	[ -n "$src" ] && ls "$src"/*.scenario.yaml >/dev/null 2>&1 || return 1
+	echo "$src"
+}
+
+install_examples() {
+	local dir tmp src
+	dir="$(choose_exampledir)"
+	tmp="$(mktemp -d)" || return 1
+	trap 'rm -rf "$tmp"' RETURN
+	# Prefer the installed version, but fall back to main so installs of an older
+	# release (whose tag predates these files) still get the current examples.
+	src="$(fetch_examples "${RESOLVED:-main}" "$tmp")" ||
+		src="$(fetch_examples main "$tmp")" || {
+		warn "could not fetch example scenarios"
 		return 1
 	}
 	mkdir -p "$dir" 2>/dev/null || {
