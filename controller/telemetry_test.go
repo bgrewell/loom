@@ -109,3 +109,29 @@ func TestObserversRender(t *testing.T) {
 		t.Fatalf("json observer output: %q", jsonOut.String())
 	}
 }
+
+// TestObserverLabelsDirection: a labeled aggregate (a concurrent/bidir flow)
+// renders its event and from→to direction so lines are distinguishable, while an
+// unlabeled aggregate stays on the plain one-flow format.
+func TestObserverLabelsDirection(t *testing.T) {
+	labeled := Aggregate{
+		At: time.Now(), Event: "down", From: "server", To: "client",
+		TxBitsPerSec: 8e9, RxBitsPerSec: 7e9,
+		Flows: []FlowSample{{Role: Sender}, {Role: Receiver}},
+	}
+	var human, jsonOut bytes.Buffer
+	NewTextObserver(&human).Observe(labeled)
+	NewJSONObserver(&jsonOut).Observe(labeled)
+	if !strings.Contains(human.String(), "down") || !strings.Contains(human.String(), "server→client") {
+		t.Fatalf("labeled line missing event/direction: %q", human.String())
+	}
+	if !strings.Contains(jsonOut.String(), `"event":"down"`) || !strings.Contains(jsonOut.String(), `"to":"client"`) {
+		t.Fatalf("labeled json missing event/direction: %q", jsonOut.String())
+	}
+
+	var plain bytes.Buffer
+	NewTextObserver(&plain).Observe(Aggregate{At: time.Now(), TxBitsPerSec: 1e6, Flows: []FlowSample{{Role: Sender}}})
+	if strings.Contains(plain.String(), "→") {
+		t.Fatalf("unlabeled line should have no direction arrow: %q", plain.String())
+	}
+}

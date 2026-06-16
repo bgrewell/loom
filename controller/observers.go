@@ -36,8 +36,8 @@ func (o *TextObserver) Observe(a Aggregate) {
 	if !a.Complete && a.Expected > 0 {
 		marker = fmt.Sprintf("  (!) %d/%d nodes reporting", a.Sources, a.Expected)
 	}
-	fmt.Fprintf(o.w, "[%s] tx %-11s rx %-11s (%d flows)%s\n",
-		a.At.Format("15:04:05"), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), len(a.Flows), marker)
+	fmt.Fprintf(o.w, "[%s] %stx %-11s rx %-11s (%d flows)%s\n",
+		a.At.Format("15:04:05"), label(a), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), len(a.Flows), marker)
 	if o.perFlow {
 		for _, f := range sortedFlows(a.Flows) {
 			fmt.Fprintf(o.w, "           %-12s %-9s %-11s %s\n",
@@ -57,6 +57,9 @@ func (o *JSONObserver) Observe(a Aggregate) {
 	_ = o.enc.Encode(map[string]any{
 		"at":              a.At.Format(time.RFC3339Nano),
 		"index":           a.Index,
+		"event":           a.Event,
+		"from":            a.From,
+		"to":              a.To,
 		"tx_bits_per_sec": a.TxBitsPerSec,
 		"rx_bits_per_sec": a.RxBitsPerSec,
 		"tx_bytes":        a.TxBytes,
@@ -95,6 +98,21 @@ func humanBytes(b uint64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+// label renders an event/direction prefix for a consolidated line, padded so
+// lines align in a multi-flow run. It is empty for an unlabeled aggregate (e.g. a
+// single-event scenario predating the field, or the end-of-run snapshot), keeping
+// the simple one-flow output unchanged.
+func label(a Aggregate) string {
+	if a.Event == "" {
+		return ""
+	}
+	dir := ""
+	if a.From != "" && a.To != "" {
+		dir = a.From + "→" + a.To
+	}
+	return fmt.Sprintf("%-10s %-17s ", a.Event, dir)
 }
 
 // sortedFlows returns the flows ordered by event then role, so per-flow output is
