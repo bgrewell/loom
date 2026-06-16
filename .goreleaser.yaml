@@ -24,7 +24,10 @@ builds:
     env: [CGO_ENABLED=0]
     goos: [linux]
     goarch: [amd64, arm64]
-    flags: [-trimpath]
+    # Build the agent with AF_XDP support compiled in (the backend is dormant
+    # unless a flow selects `datapath: afxdp`). It is pure Go, so it still
+    # cross-compiles and runs anywhere; ~1 MB larger. loom/loomctl don't need it.
+    flags: [-trimpath, -tags=afxdp]
     ldflags: *ldflags
   - id: loomctl
     main: ./cmd/loomctl
