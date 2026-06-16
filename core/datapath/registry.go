@@ -47,8 +47,11 @@ func init() {
 		return DialTCP(o.Addr, o.FrameSize)
 	})
 
-	// Receive side. ":0" binds an ephemeral UDP port (read back via Port()).
+	// Receive side. ":0" binds an ephemeral port (read back via Port()).
 	RxRegistry.Register("udp", func(o Options) (RxDatapath, error) {
 		return ListenUDP(":0", o.FrameSize)
+	})
+	RxRegistry.Register("tcp", func(o Options) (RxDatapath, error) {
+		return ListenTCP(":0", o.FrameSize)
 	})
 }

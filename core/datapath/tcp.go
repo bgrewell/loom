@@ -7,7 +7,9 @@ import "net"
 
 // TCPSocket is a kernel-stack transmit datapath over a connected TCP socket.
 // Like UDPSocket it is part of the portable "socket" backend family
-// (DESIGN.md §5.1). Each committed frame is one stream write.
+// (DESIGN.md §5.1). A whole committed batch is written in one vectored write so
+// the kernel can segment it (TSO) — TCP is a stream, so frame boundaries don't
+// matter on the wire, and one large write per batch is what reaches line rate.
 type TCPSocket struct {
 	conn net.Conn
 	pool *framePool
@@ -31,18 +33,23 @@ func (*TCPSocket) Caps() Capabilities { return Capabilities{} }
 // TxReserve hands out frames to fill.
 func (s *TCPSocket) TxReserve(n int) []Frame { return s.pool.take(n) }
 
-// TxCommit writes each filled frame to the stream.
+// TxCommit writes the whole batch in one vectored (writev) call, so the kernel
+// queues it as one large chunk and segments it with TSO.
 func (s *TCPSocket) TxCommit(frames []Frame) (int, error) {
+	bufs := make(net.Buffers, 0, len(frames))
 	sent := 0
 	for i := range frames {
 		if frames[i].Len <= 0 {
 			continue
 		}
-		if _, err := s.conn.Write(frames[i].Data[:frames[i].Len]); err != nil {
-			s.pool.release()
-			return sent, err
-		}
+		bufs = append(bufs, frames[i].Data[:frames[i].Len])
 		sent++
+	}
+	if len(bufs) > 0 {
+		if _, err := bufs.WriteTo(s.conn); err != nil {
+			s.pool.release()
+			return 0, err
+		}
 	}
 	s.pool.release()
 	return sent, nil
