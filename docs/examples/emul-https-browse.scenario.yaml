@@ -1,0 +1,34 @@
+# Emulation: HTTPS browsing — a request/response session that fetches N objects
+# with think-time gaps, the bursty shape of a user reading pages.
+#
+# `https-browse` is a request/response emulation over TCP: loom places a responder
+# on `server` and a requester on `client` that fetches `objects` objects of
+# `object_size` each, pausing `think` between them. The download bytes flow
+# server -> client (the requester is the Rx side).
+#
+# Knobs (flow params): objects, object_size (range ok, e.g. "8KB..512KB"),
+# think (range ok, e.g. "200ms..2s"), transport (tcp|udp, default tcp).
+#
+# Run:
+#   loomctl run -f emul-https-browse.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: emul-https-browse
+description: HTTPS-style request/response browsing session, client <- server
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: browse
+    flow:
+      kind: https-browse
+      objects: 50
+      object_size: 8KB..512KB
+      think: 200ms..2s
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 30s

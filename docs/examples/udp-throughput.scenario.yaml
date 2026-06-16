@@ -1,0 +1,29 @@
+# UDP throughput: an unpaced UDP flood, client -> server, for 10s.
+#
+# With no `rate`, the sender runs flat out (soak) — the UDP max-throughput test.
+# Because UDP has no flow control, the receiver may not keep up: compare the
+# sender's tx to the receiver's rx in the summary to see loss. packet_size sets
+# the datagram size (1400 keeps it under a 1500-byte MTU to avoid IP fragmenting).
+#
+# Run:
+#   loomctl run -f udp-throughput.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: udp-throughput
+description: unpaced UDP flood, client -> server, 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: blast
+    flow:
+      kind: udp
+      packet_size: 1400
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 10s

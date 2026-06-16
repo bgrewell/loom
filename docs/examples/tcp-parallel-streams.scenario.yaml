@@ -1,0 +1,50 @@
+# TCP parallel streams: four concurrent TCP streams client -> server.
+#
+# The equivalent of `iperf3 -c <server> -P 4`. Each `streamN` event is its own
+# TCP connection started at the same gate; together they show aggregate capacity
+# and per-stream fairness. With --live each stream is a separate labeled line; the
+# summary's authoritative totals sum them.
+#
+# Run:
+#   loomctl run -f tcp-parallel-streams.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live --per-flow
+scenario: tcp-parallel-streams
+description: four concurrent TCP streams, client -> server, 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: stream1
+    flow: {kind: tcp}
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop: {after: 10s}
+
+  - name: stream2
+    flow: {kind: tcp}
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop: {after: 10s}
+
+  - name: stream3
+    flow: {kind: tcp}
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop: {after: 10s}
+
+  - name: stream4
+    flow: {kind: tcp}
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop: {after: 10s}

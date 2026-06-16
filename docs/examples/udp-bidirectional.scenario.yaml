@@ -1,0 +1,42 @@
+# UDP bidirectional: simultaneous CBR UDP up and down between two hosts.
+#
+# Two paced UDP flows at once — `up` (client -> server) and `down`
+# (server -> client) — for full-duplex loss/capacity testing. Each direction is a
+# separate labeled line in the live view; the summary reports each independently
+# so you can see asymmetric loss.
+#
+# Run:
+#   loomctl run -f udp-bidirectional.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: udp-bidirectional
+description: simultaneous CBR UDP up and down at 1 Gbps each, 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: up
+    flow:
+      kind: udp
+      packet_size: 1400
+      rate: 1Gbps
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 10s
+
+  - name: down
+    flow:
+      kind: udp
+      packet_size: 1400
+      rate: 1Gbps
+    datapath: udp
+    from: server
+    to: client
+    start: 0s
+    stop:
+      after: 10s

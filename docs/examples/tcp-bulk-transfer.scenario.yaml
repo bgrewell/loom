@@ -1,0 +1,28 @@
+# TCP bulk transfer: push a fixed volume (10 GB) over one TCP stream, then stop.
+#
+# Volume-bounded instead of time-bounded — the run ends when 10 GB has been sent,
+# whatever the link speed. Useful for "how long to move N bytes" and for steady
+# large-transfer behavior. Watch the authoritative summary for the exact total
+# and the average rate over the transfer.
+#
+# Run:
+#   loomctl run -f tcp-bulk-transfer.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: tcp-bulk-transfer
+description: one TCP stream, client -> server, until 10 GB sent
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: bulk
+    flow:
+      kind: tcp
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      volume: 10GB

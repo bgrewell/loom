@@ -1,0 +1,54 @@
+# Advanced: a mixed timeline — several flows of different kinds starting at
+# different offsets, the way a real workload ramps over time.
+#
+# Events fire at their `start` offset and end on their own `stop`, so they overlap
+# on a shared timeline:
+#   t=0s   a steady 500 Mbps UDP background flow (20s)
+#   t=2s   a TCP bulk transfer kicks in (8 GB)
+#   t=5s   a VoIP call joins for 10s
+# Use --live to watch them layer in; each is a separate labeled line.
+#
+# Run:
+#   loomctl run -f advanced-mixed-timeline.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live --horizon 30s
+scenario: advanced-mixed-timeline
+description: overlapping UDP background, TCP bulk, and a VoIP call on one timeline
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: background
+    flow:
+      kind: udp
+      packet_size: 1400
+      rate: 500Mbps
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 20s
+
+  - name: bulk
+    flow:
+      kind: tcp
+    datapath: tcp
+    from: client
+    to: server
+    start: 2s
+    stop:
+      volume: 8GB
+
+  - name: call
+    flow:
+      kind: voip-call
+      codec: g711
+    datapath: udp
+    from: client
+    to: server
+    start: 5s
+    stop:
+      after: 10s

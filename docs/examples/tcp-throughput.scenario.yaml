@@ -1,0 +1,28 @@
+# TCP throughput: a single TCP stream, client -> server, for 10s.
+#
+# This is the apples-to-apples equivalent of `iperf3 -c <server>`. loom places a
+# TCP receiver (listener) on `server` and a TCP sender on `client`; the sender
+# writes in large blocks (decoupled from packet_size, which is meaningless for a
+# byte stream) so throughput is bound by the link, not the syscall rate.
+#
+# Run (two hosts, an agent on each):
+#   loomctl run -f tcp-throughput.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: tcp-throughput
+description: one TCP stream, client -> server, 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: stream
+    flow:
+      kind: tcp
+    datapath: tcp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 10s

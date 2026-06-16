@@ -1,0 +1,34 @@
+# Advanced: repeating microbursts — a short UDP burst that recurs on an interval,
+# modeling bursty/periodic traffic rather than one continuous flow.
+#
+# The `repeat` block re-fires the event: every `interval` (a value-grammar range,
+# sampled with `jitter`) a fresh burst starts, until `until`. Each instance is
+# bounded by its own `stop` (here 20 MB of volume). Tune interval/volume to shape
+# the burst cadence and size.
+#
+# Run:
+#   loomctl run -f advanced-repeating-bursts.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live --horizon 35s
+scenario: advanced-repeating-bursts
+description: a 20 MB UDP burst repeating every ~1s for 30s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: burst
+    flow:
+      kind: udp
+      packet_size: 1400
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    repeat:
+      interval: 800ms..1200ms
+      jitter: uniform
+      until: +30s
+    stop:
+      volume: 20MB

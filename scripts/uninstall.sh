@@ -51,5 +51,21 @@ done
 if [ "$removed" -eq 0 ] && [ "$needsudo" -eq 0 ]; then
 	info "no loom binaries found in: ${dirs[*]}"
 fi
+
+# --- example scenarios (installed by install.sh) ---
+exdirs=()
+[ -n "${LOOM_EXAMPLES_DIR:-}" ] && exdirs+=("$LOOM_EXAMPLES_DIR")
+exdirs+=(/usr/share/loom/examples "${XDG_DATA_HOME:-$HOME/.local/share}/loom/examples")
+for d in "${exdirs[@]}"; do
+	[ -d "$d" ] || continue
+	if rm -rf "$d" 2>/dev/null; then
+		info "removed $d"
+		rmdir "$(dirname "$d")" 2>/dev/null || true # drop the now-empty loom/ dir
+	else
+		warn "cannot remove $d (permission) — re-run with sudo"
+		needsudo=1
+	fi
+done
+
 info "loomd config / environment files / data (if any) were left untouched."
 [ "$needsudo" -eq 0 ] || exit 1

@@ -1,0 +1,30 @@
+# UDP rate-limited: constant-bit-rate UDP at 1 Gbps, client -> server.
+#
+# The `rate` param paces the sender to a steady offered load — the common shape
+# for capacity and loss testing (does the path carry 1 Gbps of UDP without drops?).
+# Compare tx vs rx in the summary for loss. Adjust `rate` and `packet_size` to
+# model different traffic.
+#
+# Run:
+#   loomctl run -f udp-rate-limited.scenario.yaml \
+#     -a 'client=10.0.0.1:9551,server=10.0.0.2:9551' --live
+scenario: udp-rate-limited
+description: CBR UDP at 1 Gbps, client -> server, 10s
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: cbr
+    flow:
+      kind: udp
+      packet_size: 1400
+      rate: 1Gbps
+    datapath: udp
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 10s
