@@ -77,24 +77,63 @@ func TestAggregateSummary(t *testing.T) {
 			{Event: "blast", Role: Receiver, Bytes: 124_000_000},
 		},
 	}
-	out := a.Summary(time.Second, true, false)
+	out := a.Summary("summ-test", time.Second, true, false)
 	if !strings.Contains(out, "--- summary (authoritative) ---") {
 		t.Fatalf("missing summary header: %q", out)
+	}
+	// Header carries scenario, duration, and stream count.
+	if !strings.Contains(out, "scenario   summ-test") || !strings.Contains(out, "streams    1") {
+		t.Errorf("summary header missing scenario/streams: %q", out)
 	}
 	if !strings.Contains(out, "125.00 MB") || !strings.Contains(out, "avg 1.00 Gbps") {
 		t.Errorf("summary totals/avg wrong: %q", out)
 	}
-	// per-flow lines present
-	if !strings.Contains(out, "sender") || !strings.Contains(out, "receiver") {
+	// per-flow lines present (the event name only appears in per-flow rows).
+	if !strings.Contains(out, "blast") {
 		t.Errorf("summary missing per-flow rows: %q", out)
 	}
-	// Without perFlow, no per-row breakdown.
-	if strings.Contains(a.Summary(time.Second, false, false), "receiver") {
+	// Without perFlow, no per-row breakdown (event name absent).
+	if strings.Contains(a.Summary("summ-test", time.Second, false, false), "blast") {
 		t.Error("non-per-flow summary should not list individual flows")
 	}
 	// The live-incomplete note appears only when flagged.
-	if !strings.Contains(a.Summary(time.Second, false, true), "reconciled") {
+	if !strings.Contains(a.Summary("summ-test", time.Second, false, true), "reconciled") {
 		t.Error("expected reconciled note when liveIncomplete is set")
+	}
+}
+
+func TestSummaryLossAndTCPDiagnostics(t *testing.T) {
+	// UDP with drops: packet-loss line with count + percentage.
+	udp := Aggregate{
+		TxBytes: 1000, RxBytes: 900, TxPackets: 100, RxPackets: 90,
+		Flows: []FlowSample{
+			{Event: "blast", Role: Sender, Datapath: "udp", From: "c", To: "s", Bytes: 1000, Packets: 100},
+			{Event: "blast", Role: Receiver, Datapath: "udp", From: "c", To: "s", Bytes: 900, Packets: 90},
+		},
+	}
+	out := udp.Summary("u", time.Second, false, false)
+	if !strings.Contains(out, "loss") || !strings.Contains(out, "10 of 100 packets") || !strings.Contains(out, "10.00%") {
+		t.Errorf("udp loss line wrong: %q", out)
+	}
+	if strings.Contains(out, "tcp ") {
+		t.Errorf("udp summary should not show a tcp line: %q", out)
+	}
+
+	// TCP: byte-loss (≈0) plus a tcp diagnostics line from the sender's stats.
+	tcp := Aggregate{
+		TxBytes: 1000, RxBytes: 1000,
+		Flows: []FlowSample{
+			{Event: "stream", Role: Sender, Datapath: "tcp", From: "c", To: "s", Bytes: 1000,
+				TCP: &TCPStats{Retrans: 12, Lost: 1, RttUs: 420, RttvarUs: 80, Cwnd: 76, Ssthresh: 1 << 31}},
+			{Event: "stream", Role: Receiver, Datapath: "tcp", From: "c", To: "s", Bytes: 1000},
+		},
+	}
+	out = tcp.Summary("t", time.Second, false, false)
+	if !strings.Contains(out, "tcp ") || !strings.Contains(out, "retrans 12") || !strings.Contains(out, "cwnd 76") {
+		t.Errorf("tcp diagnostics line missing/wrong: %q", out)
+	}
+	if !strings.Contains(out, "ssthresh ∞") { // INT_MAX during slow start renders as ∞
+		t.Errorf("large ssthresh should render as ∞: %q", out)
 	}
 }
 

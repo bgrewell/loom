@@ -32,18 +32,29 @@ func (o *TextObserver) Observe(a Aggregate) {
 	if len(a.Flows) == 0 {
 		return
 	}
+	// tx is sender-measured, rx receiver-measured (so loss shows as tx > rx). An
+	// interval flushed before every endpoint reported is flagged; the summary is
+	// authoritative.
 	marker := ""
 	if !a.Complete && a.Expected > 0 {
-		marker = fmt.Sprintf("  (!) %d/%d nodes reporting", a.Sources, a.Expected)
+		marker = fmt.Sprintf("  (!) %d/%d endpoints reporting", a.Sources, a.Expected)
 	}
-	fmt.Fprintf(o.w, "[%s] %stx %-11s rx %-11s (%d flows)%s\n",
-		a.At.Format("15:04:05"), label(a), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), len(a.Flows), marker)
+	fmt.Fprintf(o.w, "[%s] %stx %-11s rx %-11s%s\n",
+		a.At.Format("15:04:05"), label(a), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), marker)
 	if o.perFlow {
 		for _, f := range sortedFlows(a.Flows) {
-			fmt.Fprintf(o.w, "           %-12s %-9s %-11s %s\n",
-				f.Event, f.Role, humanBits(f.BitsPerSec), humanBytes(f.Bytes))
+			fmt.Fprintf(o.w, "           %-10s %-15s %-9s %-11s %s\n",
+				f.Event, flowDir(f), f.Role, humanBits(f.BitsPerSec), humanBytes(f.Bytes))
 		}
 	}
+}
+
+// flowDir renders a flow's from→to direction, or "" when unknown.
+func flowDir(f FlowSample) string {
+	if f.From == "" || f.To == "" {
+		return ""
+	}
+	return f.From + "→" + f.To
 }
 
 // JSONObserver prints aggregate telemetry as one JSON object per snapshot.
@@ -128,13 +139,94 @@ func sortedFlows(flows []FlowSample) []FlowSample {
 	return out
 }
 
-// Summary renders the authoritative end-of-run report: tx/rx cumulative totals and
-// the average throughput over the test duration, and (when perFlow) a line per
-// flow. Averaging over the test duration (not wall-clock including startup) keeps
-// it consistent with the per-interval lines. liveIncomplete notes when the live
-// view was momentarily missing a node, so the reader knows this report — not the
-// live stream — is the source of truth.
-func (a Aggregate) Summary(duration time.Duration, perFlow, liveIncomplete bool) string {
+// packetOriented reports whether every flow uses a packet datapath (udp/afxdp),
+// so packet counts on the two ends correspond 1:1 and packet loss is meaningful.
+// A stream transport (tcp) chunks differently on each end, so only byte loss is
+// comparable there.
+func packetOriented(flows []FlowSample) bool {
+	any := false
+	for _, f := range flows {
+		switch f.Datapath {
+		case "udp", "afxdp":
+			any = true
+		case "":
+			// unknown datapath — don't claim packet semantics
+		default:
+			return false // a stream transport (tcp) is present
+		}
+	}
+	return any
+}
+
+// lossLine renders end-to-end loss (sender-measured minus receiver-measured) as a
+// percentage with a count. For packet datapaths it reports packet loss; for stream
+// transports it reports byte loss (≈0 — TCP recovers loss via retransmits, which
+// app-level byte accounting can't see). Empty when nothing was sent.
+func lossLine(a Aggregate) string {
+	if a.TxBytes == 0 {
+		return ""
+	}
+	lostBytes := uint64(0)
+	if a.TxBytes > a.RxBytes {
+		lostBytes = a.TxBytes - a.RxBytes
+	}
+	if packetOriented(a.Flows) && a.TxPackets > 0 {
+		lostPkts := uint64(0)
+		if a.TxPackets > a.RxPackets {
+			lostPkts = a.TxPackets - a.RxPackets
+		}
+		pct := float64(lostPkts) / float64(a.TxPackets) * 100
+		return fmt.Sprintf("  loss       %.2f%%   (%d of %d packets, %s)\n",
+			pct, lostPkts, a.TxPackets, humanBytes(lostBytes))
+	}
+	pct := float64(lostBytes) / float64(a.TxBytes) * 100
+	return fmt.Sprintf("  loss       %.2f%%   (%s)\n", pct, humanBytes(lostBytes))
+}
+
+// tcpLine renders a sender flow's TCP_INFO for the summary: retransmits and lost
+// segments (climbing = trouble), smoothed RTT ± variance, and the congestion
+// window / slow-start threshold (a collapsed cwnd signals congestion).
+func tcpLine(f FlowSample) string {
+	t := f.TCP
+	ssthresh := fmt.Sprintf("%d", t.Ssthresh)
+	if t.Ssthresh >= 1<<30 { // kernel reports ~INT_MAX while still in slow start
+		ssthresh = "∞"
+	}
+	dir := flowDir(f)
+	if dir != "" {
+		dir = "   (" + dir + ")"
+	}
+	return fmt.Sprintf("  tcp        retrans %d  lost %d  rtt %.2fms ±%.2f  cwnd %d seg  ssthresh %s%s\n",
+		t.Retrans, t.Lost, float64(t.RttUs)/1000, float64(t.RttvarUs)/1000, t.Cwnd, ssthresh, dir)
+}
+
+// StreamSummary counts the distinct streams (events) in the flows and lists their
+// unique directions, for the summary header. One event = one logical stream
+// (carried by a sender + receiver pair). Exported for the JSON summary in loomctl.
+func StreamSummary(flows []FlowSample) (int, string) {
+	events := make(map[string]bool)
+	var dirs []string
+	seenDir := make(map[string]bool)
+	for _, f := range flows {
+		events[f.Event] = true
+		if d := flowDir(f); d != "" && !seenDir[d] {
+			seenDir[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	sort.Strings(dirs)
+	return len(events), strings.Join(dirs, ", ")
+}
+
+// Summary renders the authoritative end-of-run report: a header (scenario,
+// duration, stream count + directions) followed by tx/rx cumulative totals and the
+// average over the test duration, and (when perFlow) a line per flow. tx is
+// sender-measured and rx receiver-measured, so on a lossless transport they match
+// and on a lossy one the gap is loss. Averaging over the test duration (not
+// wall-clock including startup) keeps it consistent with the per-interval lines.
+// liveIncomplete notes when the live view was momentarily missing an endpoint, so
+// the reader knows this report — not the live stream — is the source of truth.
+func (a Aggregate) Summary(scenario string, duration time.Duration, perFlow, liveIncomplete bool) string {
 	secs := duration.Seconds()
 	avg := func(bytes uint64) string {
 		if secs <= 0 {
@@ -142,18 +234,36 @@ func (a Aggregate) Summary(duration time.Duration, perFlow, liveIncomplete bool)
 		}
 		return humanBits(float64(bytes) * 8 / secs)
 	}
+	streams, dirs := StreamSummary(a.Flows)
 	var b strings.Builder
-	fmt.Fprintf(&b, "--- summary (authoritative) --- %s\n", duration.Round(time.Millisecond))
-	fmt.Fprintf(&b, "  tx %-10s avg %s\n", humanBytes(a.TxBytes), avg(a.TxBytes))
-	fmt.Fprintf(&b, "  rx %-10s avg %s\n", humanBytes(a.RxBytes), avg(a.RxBytes))
+	fmt.Fprintf(&b, "--- summary (authoritative) ---\n")
+	if scenario != "" {
+		fmt.Fprintf(&b, "  scenario   %s\n", scenario)
+	}
+	fmt.Fprintf(&b, "  duration   %s\n", duration.Round(time.Millisecond))
+	if dirs != "" {
+		fmt.Fprintf(&b, "  streams    %d  (%s)\n", streams, dirs)
+	} else {
+		fmt.Fprintf(&b, "  streams    %d\n", streams)
+	}
+	fmt.Fprintf(&b, "  tx %-10s avg %s   (sender-measured)\n", humanBytes(a.TxBytes), avg(a.TxBytes))
+	fmt.Fprintf(&b, "  rx %-10s avg %s   (receiver-measured)\n", humanBytes(a.RxBytes), avg(a.RxBytes))
+	b.WriteString(lossLine(a))
+	// TCP health (retransmits/RTT/cwnd) per sending TCP flow — the signal byte
+	// accounting can't show, since TCP recovers loss below the app layer.
+	for _, f := range sortedFlows(a.Flows) {
+		if f.TCP != nil && (f.Role == Sender || f.Role == Responder || f.Role == Requester) {
+			fmt.Fprintf(&b, "%s", tcpLine(f))
+		}
+	}
 	if perFlow {
 		for _, f := range sortedFlows(a.Flows) {
-			fmt.Fprintf(&b, "  %-12s %-9s %-10s avg %s\n",
-				f.Event, f.Role, humanBytes(f.Bytes), avg(f.Bytes))
+			fmt.Fprintf(&b, "  %-10s %-15s %-9s %-10s avg %s\n",
+				f.Event, flowDir(f), f.Role, humanBytes(f.Bytes), avg(f.Bytes))
 		}
 	}
 	if liveIncomplete {
-		fmt.Fprintf(&b, "  note: some live intervals were missing a node; totals above are reconciled.\n")
+		fmt.Fprintf(&b, "  note: some live intervals were missing an endpoint; totals above are reconciled.\n")
 	}
 	return b.String()
 }

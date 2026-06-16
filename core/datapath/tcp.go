@@ -57,3 +57,22 @@ func (s *TCPSocket) TxCommit(frames []Frame) (int, error) {
 
 // Close closes the socket.
 func (s *TCPSocket) Close() error { return s.conn.Close() }
+
+// TCPDiag is a snapshot of a sender socket's kernel TCP_INFO, for link profiling
+// (see Diagnoser). All counters are sender-side; RTTs are in microseconds and the
+// windows are in segments.
+type TCPDiag struct {
+	TotalRetrans uint32 // cumulative retransmitted segments
+	Lost         uint32 // segments currently considered lost
+	RttUs        uint32 // smoothed round-trip time (µs)
+	RttvarUs     uint32 // round-trip time variance (µs)
+	SndCwnd      uint32 // congestion window (segments)
+	SndSsthresh  uint32 // slow-start threshold (segments)
+}
+
+// Diagnoser is an optional datapath capability: report transport health (TCP_INFO
+// for the TCP datapath). The agent reads it at telemetry boundaries so the
+// controller can surface retransmits/RTT/cwnd in the run summary.
+type Diagnoser interface {
+	Diag() (TCPDiag, bool)
+}

@@ -102,7 +102,7 @@ func TestObserversRender(t *testing.T) {
 	var human, jsonOut bytes.Buffer
 	NewTextObserver(&human).Observe(a)
 	NewJSONObserver(&jsonOut).Observe(a)
-	if !strings.Contains(human.String(), "Mbps") || !strings.Contains(human.String(), "2 flows") {
+	if !strings.Contains(human.String(), "Mbps") {
 		t.Fatalf("text observer output: %q", human.String())
 	}
 	if !strings.Contains(jsonOut.String(), `"rx_bits_per_sec"`) {

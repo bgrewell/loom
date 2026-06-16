@@ -21,9 +21,23 @@ type FlowSample struct {
 	Event      string
 	FlowID     string
 	Role       Role
+	From       string
+	To         string
+	Datapath   string
 	Bytes      uint64
 	Packets    uint64
 	BitsPerSec float64
+	TCP        *TCPStats // sender-side TCP_INFO, nil for non-TCP / receiver flows
+}
+
+// TCPStats is a sender socket's TCP_INFO snapshot, surfaced for link profiling.
+type TCPStats struct {
+	Retrans  uint32
+	Lost     uint32
+	RttUs    uint32
+	RttvarUs uint32
+	Cwnd     uint32
+	Ssthresh uint32
 }
 
 // Aggregate is a consolidated telemetry line. For a live interval it carries that
@@ -42,6 +56,8 @@ type Aggregate struct {
 	RxBitsPerSec float64
 	TxBytes      uint64
 	RxBytes      uint64
+	TxPackets    uint64
+	RxPackets    uint64
 	Sources      int
 	Expected     int
 	Complete     bool
@@ -237,8 +253,8 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 		t.mu.Lock()
 		// Cumulative, for the end-of-run summary.
 		t.latest[key] = FlowSample{
-			Event: p.Event, FlowID: p.FlowID, Role: p.Role,
-			Bytes: s.GetBytes(), Packets: s.GetPackets(),
+			Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To, Datapath: p.Datapath,
+			Bytes: s.GetBytes(), Packets: s.GetPackets(), TCP: tcpStatsOf(s.GetTcp()),
 		}
 		// Fold a full interval's delta into its bucket. The final (trailing partial)
 		// sample carries index -1 and is accounted only in the cumulative totals.
@@ -247,6 +263,18 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 		}
 		t.mu.Unlock()
 		t.tryEmit(time.Now())
+	}
+}
+
+// tcpStatsOf converts a proto TcpInfo (nil for non-TCP samples) to a TCPStats.
+func tcpStatsOf(ti *loomv1.TcpInfo) *TCPStats {
+	if ti == nil {
+		return nil
+	}
+	return &TCPStats{
+		Retrans: ti.GetTotalRetrans(), Lost: ti.GetLost(),
+		RttUs: ti.GetRttUs(), RttvarUs: ti.GetRttvarUs(),
+		Cwnd: ti.GetSndCwnd(), Ssthresh: ti.GetSndSsthresh(),
 	}
 }
 
@@ -283,7 +311,7 @@ func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
 	}
 	b.reported[p.Key()] = true
 	b.flows[p.Key()] = FlowSample{
-		Event: p.Event, FlowID: p.FlowID, Role: p.Role,
+		Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To,
 		Bytes: s.GetIntervalBytes(), Packets: s.GetIntervalPackets(),
 		BitsPerSec: bitsPerNanos(s.GetIntervalBytes(), s.GetIntervalNanos()),
 	}
@@ -455,8 +483,10 @@ func (t *Telemetry) Snapshot() Aggregate {
 		agg.Flows = append(agg.Flows, fs)
 		if fs.Role == Receiver || fs.Role == Requester {
 			agg.RxBytes += fs.Bytes
+			agg.RxPackets += fs.Packets
 		} else {
 			agg.TxBytes += fs.Bytes
+			agg.TxPackets += fs.Packets
 		}
 	}
 	return agg
