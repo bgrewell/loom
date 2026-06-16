@@ -40,6 +40,38 @@ func sample(idx int64, bytes uint64) *loomv1.TelemetrySample {
 	}
 }
 
+func sampleTCP(idx int64, bytes uint64, totalRetrans, cwnd uint32) *loomv1.TelemetrySample {
+	s := sample(idx, bytes)
+	s.Tcp = &loomv1.TcpInfo{TotalRetrans: totalRetrans, SndCwnd: cwnd, RttUs: 250}
+	return s
+}
+
+// TestAggregatorLiveTCPDelta: the live aggregate carries the sender's TCP health,
+// with retrans as the per-interval delta (not the cumulative total).
+func TestAggregatorLiveTCPDelta(t *testing.T) {
+	tel, tx, rx, cap := newAgg(t)
+
+	tel.fold(tx, sampleTCP(0, 1_000_000, 5, 40)) // cumulative retrans 5 by end of interval 0
+	tel.fold(rx, sample(0, 1_000_000))
+	tel.tryEmit(time.Now())
+
+	tel.fold(tx, sampleTCP(1, 1_000_000, 8, 44)) // cumulative 8 → delta 3 this interval
+	tel.fold(rx, sample(1, 1_000_000))
+	tel.tryEmit(time.Now())
+
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.aggs) != 2 {
+		t.Fatalf("emitted %d lines, want 2", len(cap.aggs))
+	}
+	if cap.aggs[0].TCP == nil || cap.aggs[0].TCP.Retrans != 5 {
+		t.Errorf("interval 0 retrans delta = %+v, want 5", cap.aggs[0].TCP)
+	}
+	if cap.aggs[1].TCP == nil || cap.aggs[1].TCP.Retrans != 3 || cap.aggs[1].TCP.Cwnd != 44 {
+		t.Errorf("interval 1 = %+v, want retrans delta 3, cwnd 44", cap.aggs[1].TCP)
+	}
+}
+
 func newAgg(t *testing.T) (*Telemetry, Placed, Placed, *capture) {
 	t.Helper()
 	tx := Placed{AgentAddr: "a", FlowID: "1", Role: Sender, Event: "e", From: "client", To: "server"}
