@@ -1,0 +1,24 @@
+# Two-node TCP scenario for the LXD integration suite: a single TCP flow from the
+# client endpoint to the server endpoint over the TCP datapath. loomctl places a
+# TCP receiver (listener) on `server` and a TCP sender on `client`; the bytes flow
+# client -> server over a real kernel TCP connection across the bridge. This
+# exercises the TCP receive datapath and the vectored (TSO) sender.
+scenario: lxd-two-node-tcp
+description: one TCP flow, client -> server, over the TCP datapath
+seed: 1
+
+endpoints:
+  - name: client
+  - name: server
+
+timeline:
+  - name: stream
+    flow:
+      kind: tcp
+      datapath: tcp
+      packet_size: 1400
+    from: client
+    to: server
+    start: 0s
+    stop:
+      after: 3s

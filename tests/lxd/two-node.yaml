@@ -1,11 +1,11 @@
 suite: loom two-node LXD
 
 # Multi-node correctness on LXD containers (docs/testing.md Tier 4). Two
-# containers each run a loomd agent; loomctl runs on the host and drives two
-# scenarios across them: (1) a push UDP flow — receiver on one agent, sender on
-# the other; and (2) an https-browse request/response flow — responder on one
-# agent, requester on the other — which validates cross-host responder reach.
-# Each asserts both flows were placed and bytes actually crossed the wire.
+# containers each run a loomd agent; loomctl runs on the host and drives three
+# scenarios across them: (1) a push UDP flow — receiver/sender; (2) an
+# https-browse request/response flow — responder/requester (cross-host responder
+# reach); and (3) a TCP flow over the TCP datapath — listener/sender. Each asserts
+# both flows were placed and bytes actually crossed the wire.
 #
 # Topology: agents get DHCP addresses on the default LXD bridge (lxdbr0); the
 # host reaches their control planes and the sender reaches the receiver over the
@@ -45,6 +45,7 @@ setup:
           CGO_ENABLED=0 go build -o "$BIN/loomctl" ./cmd/loomctl
           cp tests/lxd/two-node.scenario.yaml "$BIN/scenario.yaml"
           cp tests/lxd/two-node-reqresp.scenario.yaml "$BIN/reqresp.yaml"
+          cp tests/lxd/two-node-tcp.scenario.yaml "$BIN/tcp.yaml"
 
   - name: push loomd into the agent containers
     node: local
@@ -116,6 +117,27 @@ tests:
         echo "$out" | grep -oE '"rx_bytes":[0-9]+' | grep -qvE '"rx_bytes":0$' && echo "REQRESP_RX_NONZERO"
       evaluate:
         contains: "REQRESP_RX_NONZERO"
+
+  - name: controller drives a TCP flow over the TCP datapath and the receiver sees traffic
+    node: local
+    type: execute
+    options:
+      command: |
+        set -uo pipefail
+        ip() { lxc list "$1" --project default -f csv -c 4 | awk 'NF{print $1; exit}'; }
+        SIP="$(ip server)"; CIP="$(ip client)"
+        echo "server=$SIP client=$CIP"
+        out="$(/tmp/loom-lxd/bin/loomctl run \
+          -f /tmp/loom-lxd/bin/tcp.yaml \
+          -a "client=$CIP:9551,server=$SIP:9551" \
+          --horizon 8s --interval 500ms --output json 2>&1)"
+        echo "$out"
+        echo "$out" | grep -q "placed 2 flows" && echo "PLACED_OK"
+        # The TCP receiver (listener) is the Rx side; non-zero rx_bytes proves the
+        # TCP datapath delivered a real kernel stream across the bridge.
+        echo "$out" | grep -oE '"rx_bytes":[0-9]+' | grep -qvE '"rx_bytes":0$' && echo "TCP_RX_NONZERO"
+      evaluate:
+        contains: "TCP_RX_NONZERO"
 
 teardown:
   - name: cleanup host build dir
