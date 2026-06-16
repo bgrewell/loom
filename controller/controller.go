@@ -77,6 +77,7 @@ type Placed struct {
 	Event     string
 	From      string
 	To        string
+	Datapath  string // udp|tcp|afxdp (or the reqresp transport) — for loss accounting
 }
 
 // Key uniquely identifies a placed flow across agents.
@@ -282,11 +283,11 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 	if _, err := toAgent.Start(ctx, c.startReq(rxCfg.GetFlowId(), to.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start receiver: %w", ev.Name, err)
 	}
-	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name, from.Name, to.Name)
+	c.track(toAgent, toAddr, rxCfg.GetFlowId(), Receiver, ev.Name, from.Name, to.Name, dp)
 	if _, err := fromAgent.Start(ctx, c.startReq(txCfg.GetFlowId(), from.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start sender: %w", ev.Name, err)
 	}
-	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name, from.Name, to.Name)
+	c.track(fromAgent, fromAddr, txCfg.GetFlowId(), Sender, ev.Name, from.Name, to.Name, dp)
 	return nil
 }
 
@@ -316,7 +317,7 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 	if _, err := toAgent.Start(ctx, c.startReq(respCfg.GetFlowId(), to.Name, time.Time{})); err != nil {
 		return fmt.Errorf("event %q: start responder: %w", ev.Name, err)
 	}
-	c.track(toAgent, toAddr, respCfg.GetFlowId(), Responder, ev.Name, from.Name, to.Name)
+	c.track(toAgent, toAddr, respCfg.GetFlowId(), Responder, ev.Name, from.Name, to.Name, transport)
 
 	// Requester on the source agent, dialing the responder's data address.
 	dataHost := to.Address
@@ -332,7 +333,7 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 	if _, err := fromAgent.Start(ctx, c.startReq(reqCfg.GetFlowId(), from.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start requester: %w", ev.Name, err)
 	}
-	c.track(fromAgent, fromAddr, reqCfg.GetFlowId(), Requester, ev.Name, from.Name, to.Name)
+	c.track(fromAgent, fromAddr, reqCfg.GetFlowId(), Requester, ev.Name, from.Name, to.Name, transport)
 	return nil
 }
 
@@ -393,10 +394,10 @@ func (c *Controller) startAtFor(endpoint string, gate time.Time) int64 {
 	return gate.Add(off).UnixNano()
 }
 
-func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Role, event, from, to string) {
+func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Role, event, from, to, datapath string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.placed = append(c.placed, Placed{Agent: agent, AgentAddr: addr, FlowID: id, Role: role, Event: event, From: from, To: to})
+	c.placed = append(c.placed, Placed{Agent: agent, AgentAddr: addr, FlowID: id, Role: role, Event: event, From: from, To: to, Datapath: datapath})
 }
 
 // senderSpec builds the sender's FlowSpec from an event, the chosen datapath,

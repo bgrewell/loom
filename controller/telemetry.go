@@ -23,6 +23,7 @@ type FlowSample struct {
 	Role       Role
 	From       string
 	To         string
+	Datapath   string
 	Bytes      uint64
 	Packets    uint64
 	BitsPerSec float64
@@ -44,6 +45,8 @@ type Aggregate struct {
 	RxBitsPerSec float64
 	TxBytes      uint64
 	RxBytes      uint64
+	TxPackets    uint64
+	RxPackets    uint64
 	Sources      int
 	Expected     int
 	Complete     bool
@@ -239,7 +242,7 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 		t.mu.Lock()
 		// Cumulative, for the end-of-run summary.
 		t.latest[key] = FlowSample{
-			Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To,
+			Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To, Datapath: p.Datapath,
 			Bytes: s.GetBytes(), Packets: s.GetPackets(),
 		}
 		// Fold a full interval's delta into its bucket. The final (trailing partial)
@@ -457,8 +460,10 @@ func (t *Telemetry) Snapshot() Aggregate {
 		agg.Flows = append(agg.Flows, fs)
 		if fs.Role == Receiver || fs.Role == Requester {
 			agg.RxBytes += fs.Bytes
+			agg.RxPackets += fs.Packets
 		} else {
 			agg.TxBytes += fs.Bytes
+			agg.TxPackets += fs.Packets
 		}
 	}
 	return agg

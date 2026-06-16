@@ -139,6 +139,50 @@ func sortedFlows(flows []FlowSample) []FlowSample {
 	return out
 }
 
+// packetOriented reports whether every flow uses a packet datapath (udp/afxdp),
+// so packet counts on the two ends correspond 1:1 and packet loss is meaningful.
+// A stream transport (tcp) chunks differently on each end, so only byte loss is
+// comparable there.
+func packetOriented(flows []FlowSample) bool {
+	any := false
+	for _, f := range flows {
+		switch f.Datapath {
+		case "udp", "afxdp":
+			any = true
+		case "":
+			// unknown datapath — don't claim packet semantics
+		default:
+			return false // a stream transport (tcp) is present
+		}
+	}
+	return any
+}
+
+// lossLine renders end-to-end loss (sender-measured minus receiver-measured) as a
+// percentage with a count. For packet datapaths it reports packet loss; for stream
+// transports it reports byte loss (≈0 — TCP recovers loss via retransmits, which
+// app-level byte accounting can't see). Empty when nothing was sent.
+func lossLine(a Aggregate) string {
+	if a.TxBytes == 0 {
+		return ""
+	}
+	lostBytes := uint64(0)
+	if a.TxBytes > a.RxBytes {
+		lostBytes = a.TxBytes - a.RxBytes
+	}
+	if packetOriented(a.Flows) && a.TxPackets > 0 {
+		lostPkts := uint64(0)
+		if a.TxPackets > a.RxPackets {
+			lostPkts = a.TxPackets - a.RxPackets
+		}
+		pct := float64(lostPkts) / float64(a.TxPackets) * 100
+		return fmt.Sprintf("  loss       %.2f%%   (%d of %d packets, %s)\n",
+			pct, lostPkts, a.TxPackets, humanBytes(lostBytes))
+	}
+	pct := float64(lostBytes) / float64(a.TxBytes) * 100
+	return fmt.Sprintf("  loss       %.2f%%   (%s)\n", pct, humanBytes(lostBytes))
+}
+
 // StreamSummary counts the distinct streams (events) in the flows and lists their
 // unique directions, for the summary header. One event = one logical stream
 // (carried by a sender + receiver pair). Exported for the JSON summary in loomctl.
@@ -187,6 +231,7 @@ func (a Aggregate) Summary(scenario string, duration time.Duration, perFlow, liv
 	}
 	fmt.Fprintf(&b, "  tx %-10s avg %s   (sender-measured)\n", humanBytes(a.TxBytes), avg(a.TxBytes))
 	fmt.Fprintf(&b, "  rx %-10s avg %s   (receiver-measured)\n", humanBytes(a.RxBytes), avg(a.RxBytes))
+	b.WriteString(lossLine(a))
 	if perFlow {
 		for _, f := range sortedFlows(a.Flows) {
 			fmt.Fprintf(&b, "  %-10s %-15s %-9s %-10s avg %s\n",
