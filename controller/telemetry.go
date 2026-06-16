@@ -62,6 +62,7 @@ type Aggregate struct {
 	Expected     int
 	Complete     bool
 	Flows        []FlowSample
+	TCP          *TCPStats // sender TCP health for this interval (Retrans is the delta); nil for non-TCP
 }
 
 // Observer receives aggregate telemetry snapshots in real time. The CLI is one
@@ -97,6 +98,7 @@ type bucket struct {
 	flows            map[string]FlowSample // per-flow delta + rate (for --per-flow)
 	firstSeen        time.Time             // when this bucket got its first report
 	hasSource        bool                  // a source (sender/requester) reported it
+	tcp              *TCPStats             // sender TCP_INFO this interval (Retrans = delta)
 }
 
 // Telemetry subscribes to placed flows' telemetry streams and consolidates their
@@ -112,15 +114,16 @@ type Telemetry struct {
 	interval time.Duration
 	token    string
 
-	mu         sync.Mutex
-	latest     map[string]FlowSample // cumulative per flow (for Snapshot/summary)
-	ended      map[string]bool       // flows whose telemetry stream finished
-	buckets    map[bucketKey]*bucket // pending interval accumulators
-	nextIndex  map[string]int64      // next interval index to emit, per event
-	events     map[string]bool       // events seen (to iterate for emission)
-	incomplete bool                  // a live interval was emitted before all reported
-	observers  []Observer
-	src        placedSource // set in Collect; used to count expected flows per event
+	mu          sync.Mutex
+	latest      map[string]FlowSample // cumulative per flow (for Snapshot/summary)
+	ended       map[string]bool       // flows whose telemetry stream finished
+	buckets     map[bucketKey]*bucket // pending interval accumulators
+	nextIndex   map[string]int64      // next interval index to emit, per event
+	events      map[string]bool       // events seen (to iterate for emission)
+	incomplete  bool                  // a live interval was emitted before all reported
+	lastRetrans map[string]uint32     // cumulative TCP retrans last seen per flow, for live deltas
+	observers   []Observer
+	src         placedSource // set in Collect; used to count expected flows per event
 
 	connMu sync.Mutex
 	conns  map[string]*grpc.ClientConn
@@ -146,14 +149,15 @@ func NewTelemetry(interval time.Duration, opts ...TelemetryOption) *Telemetry {
 		interval = time.Second
 	}
 	t := &Telemetry{
-		interval:  interval,
-		latest:    make(map[string]FlowSample),
-		ended:     make(map[string]bool),
-		buckets:   make(map[bucketKey]*bucket),
-		nextIndex: make(map[string]int64),
-		events:    make(map[string]bool),
-		conns:     make(map[string]*grpc.ClientConn),
-		dialed:    make(map[string]loomv1.ControlClient),
+		interval:    interval,
+		latest:      make(map[string]FlowSample),
+		ended:       make(map[string]bool),
+		buckets:     make(map[bucketKey]*bucket),
+		nextIndex:   make(map[string]int64),
+		events:      make(map[string]bool),
+		lastRetrans: make(map[string]uint32),
+		conns:       make(map[string]*grpc.ClientConn),
+		dialed:      make(map[string]loomv1.ControlClient),
 	}
 	for _, o := range opts {
 		o(t)
@@ -315,6 +319,21 @@ func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
 		Bytes: s.GetIntervalBytes(), Packets: s.GetIntervalPackets(),
 		BitsPerSec: bitsPerNanos(s.GetIntervalBytes(), s.GetIntervalNanos()),
 	}
+	// TCP health for the live line: snapshot the sender's TCP_INFO, with retrans as
+	// this interval's delta (new retransmits now) rather than the cumulative total.
+	if ti := s.GetTcp(); ti != nil {
+		cum := ti.GetTotalRetrans()
+		delta := cum - t.lastRetrans[p.Key()]
+		if cum < t.lastRetrans[p.Key()] { // counter reset (shouldn't happen); fall back to current
+			delta = cum
+		}
+		t.lastRetrans[p.Key()] = cum
+		b.tcp = &TCPStats{
+			Retrans: delta, Lost: ti.GetLost(),
+			RttUs: ti.GetRttUs(), RttvarUs: ti.GetRttvarUs(),
+			Cwnd: ti.GetSndCwnd(), Ssthresh: ti.GetSndSsthresh(),
+		}
+	}
 }
 
 // eventMeta describes an event's placed flows: how many to expect, their global
@@ -428,6 +447,7 @@ func aggFromBucket(now time.Time, index int64, b *bucket, expected int, complete
 		Sources:      len(b.reported),
 		Expected:     expected,
 		Complete:     complete,
+		TCP:          b.tcp,
 	}
 	for _, fs := range b.flows {
 		a.Flows = append(a.Flows, fs)

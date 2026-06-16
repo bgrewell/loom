@@ -39,14 +39,24 @@ func (o *TextObserver) Observe(a Aggregate) {
 	if !a.Complete && a.Expected > 0 {
 		marker = fmt.Sprintf("  (!) %d/%d endpoints reporting", a.Sources, a.Expected)
 	}
-	fmt.Fprintf(o.w, "[%s] %stx %-11s rx %-11s%s\n",
-		a.At.Format("15:04:05"), label(a), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), marker)
+	fmt.Fprintf(o.w, "[%s] %stx %-11s rx %-11s%s%s\n",
+		a.At.Format("15:04:05"), label(a), humanBits(a.TxBitsPerSec), humanBits(a.RxBitsPerSec), liveTCP(a.TCP), marker)
 	if o.perFlow {
 		for _, f := range sortedFlows(a.Flows) {
 			fmt.Fprintf(o.w, "           %-10s %-15s %-9s %-11s %s\n",
 				f.Event, flowDir(f), f.Role, humanBits(f.BitsPerSec), humanBytes(f.Bytes))
 		}
 	}
+}
+
+// liveTCP renders a compact per-interval TCP-health suffix for the live line:
+// retransmits *this interval* (the live trouble signal), current congestion window,
+// and smoothed RTT. Empty for non-TCP intervals.
+func liveTCP(t *TCPStats) string {
+	if t == nil {
+		return ""
+	}
+	return fmt.Sprintf("  tcp retrans +%d cwnd %d rtt %.2fms", t.Retrans, t.Cwnd, float64(t.RttUs)/1000)
 }
 
 // flowDir renders a flow's from→to direction, or "" when unknown.
@@ -65,7 +75,7 @@ func NewJSONObserver(w io.Writer) *JSONObserver { return &JSONObserver{enc: json
 
 // Observe implements Observer.
 func (o *JSONObserver) Observe(a Aggregate) {
-	_ = o.enc.Encode(map[string]any{
+	m := map[string]any{
 		"at":              a.At.Format(time.RFC3339Nano),
 		"index":           a.Index,
 		"event":           a.Event,
@@ -79,7 +89,14 @@ func (o *JSONObserver) Observe(a Aggregate) {
 		"sources":         a.Sources,
 		"expected":        a.Expected,
 		"complete":        a.Complete,
-	})
+	}
+	if t := a.TCP; t != nil {
+		m["tcp_retrans"] = t.Retrans // delta this interval
+		m["tcp_lost"] = t.Lost
+		m["tcp_rtt_us"] = t.RttUs
+		m["tcp_cwnd"] = t.Cwnd
+	}
+	_ = o.enc.Encode(m)
 }
 
 func humanBits(bps float64) string {

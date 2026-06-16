@@ -134,4 +134,17 @@ func TestObserverLabelsDirection(t *testing.T) {
 	if strings.Contains(plain.String(), "→") {
 		t.Fatalf("unlabeled line should have no direction arrow: %q", plain.String())
 	}
+
+	// A TCP interval appends a live health suffix; a non-TCP one does not.
+	var withTCP bytes.Buffer
+	NewTextObserver(&withTCP).Observe(Aggregate{
+		At: time.Now(), TxBitsPerSec: 8e9, Flows: []FlowSample{{Role: Sender}},
+		TCP: &TCPStats{Retrans: 3, Cwnd: 44, RttUs: 250},
+	})
+	if !strings.Contains(withTCP.String(), "tcp retrans +3") || !strings.Contains(withTCP.String(), "cwnd 44") {
+		t.Fatalf("live line missing tcp health: %q", withTCP.String())
+	}
+	if strings.Contains(plain.String(), "tcp ") {
+		t.Fatalf("non-tcp line should have no tcp suffix: %q", plain.String())
+	}
 }
