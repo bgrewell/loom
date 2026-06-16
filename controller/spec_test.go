@@ -93,3 +93,33 @@ func TestSenderSpecThreadsDatapathAndIface(t *testing.T) {
 		}
 	})
 }
+
+// TestEventDatapath: datapath resolves from the event-level field or, as a
+// fallback, from the flow block (where authors naturally put it alongside
+// packet_size) — never silently UDP when "tcp" was requested under flow.
+func TestEventDatapath(t *testing.T) {
+	tests := []struct {
+		name string
+		ev   scenario.Event
+		want string
+	}{
+		{"event-level wins", scenario.Event{
+			Datapath: "afxdp",
+			Flow:     scenario.Flow{Params: map[string]any{"datapath": "tcp"}},
+		}, "afxdp"},
+		{"flow-level fallback", scenario.Event{
+			Flow: scenario.Flow{Kind: "tcp", Params: map[string]any{"datapath": "tcp"}},
+		}, "tcp"},
+		{"default udp", scenario.Event{Flow: scenario.Flow{Kind: "udp"}}, "udp"},
+		{"empty flow datapath falls through to udp", scenario.Event{
+			Flow: scenario.Flow{Params: map[string]any{"datapath": ""}},
+		}, "udp"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := eventDatapath(tc.ev); got != tc.want {
+				t.Errorf("eventDatapath = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

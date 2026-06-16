@@ -243,10 +243,7 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return c.fireRequestResponse(ctx, ev, from, to, fromAgent, fromAddr, toAgent, toAddr)
 	}
 
-	dp := ev.Datapath
-	if dp == "" {
-		dp = "udp"
-	}
+	dp := eventDatapath(ev)
 
 	// Configure the receiver first (its ephemeral port targets the sender). A UDP
 	// listener returns a data port; a NIC-bound datapath (afxdp) uses iface/queue.
@@ -488,6 +485,23 @@ func stringParams(p map[string]any) map[string]string {
 		out[k] = fmt.Sprint(v)
 	}
 	return out
+}
+
+// eventDatapath resolves an event's datapath. The canonical place is the
+// event-level `datapath:` field, but `packet_size` and other knobs live under
+// `flow:`, so authors naturally put `datapath:` there too — accept it as a
+// fallback rather than silently running UDP (which made `datapath: tcp` under
+// `flow:` quietly send UDP datagrams). Event-level wins when both are set.
+func eventDatapath(ev scenario.Event) string {
+	if ev.Datapath != "" {
+		return ev.Datapath
+	}
+	if v, ok := ev.Flow.Params["datapath"]; ok {
+		if s := fmt.Sprint(v); s != "" {
+			return s
+		}
+	}
+	return "udp"
 }
 
 func packetSize(ev scenario.Event) int {

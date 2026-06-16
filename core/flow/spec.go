@@ -35,11 +35,32 @@ type Spec struct {
 	Frame *generator.FrameOptions
 }
 
+// tcpWriteBlock is the write granularity for the TCP datapath. TCP is a byte
+// stream, so packet_size has no meaning on the wire (the kernel segments with
+// TSO); writing in packet_size units instead throttles throughput to the
+// per-write syscall rate. A large block lets each vectored write amortize the
+// syscall over many kilobytes — the lever that closes the gap to iperf3 (which
+// likewise writes a large block, not MTU-sized chunks). 128 KiB matches iperf3's
+// default block size.
+const tcpWriteBlock = 128 * 1024
+
 // Build constructs a Flow from a Spec, resolving the generator, scheduler, and
 // datapath through c's registries (ADR-0022). A nil c uses components.Default().
 // The caller owns the datapath and should Close it (via Flow.Datapath) when done.
 func Build(spec Spec, c *components.Components) (*Flow, error) {
 	c = components.OrDefault(c)
+
+	dname := spec.Datapath
+	if dname == "" {
+		dname = "discard"
+	}
+
+	// For TCP the write block is decoupled from packet_size (see tcpWriteBlock);
+	// every other datapath uses packet_size as the frame size.
+	block := spec.PacketSize
+	if dname == "tcp" {
+		block = tcpWriteBlock
+	}
 
 	gname := spec.Generator
 	if gname == "" {
@@ -47,24 +68,20 @@ func Build(spec Spec, c *components.Components) (*Flow, error) {
 	}
 	gen, err := c.Generators.Build(gname, generator.Options{
 		Payload:    spec.Payload,
-		PacketSize: spec.PacketSize,
+		PacketSize: block,
 		Frame:      spec.Frame,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	sched, err := schedulerForRate(c, spec.Rate, spec.PacketSize)
+	sched, err := schedulerForRate(c, spec.Rate, block)
 	if err != nil {
 		return nil, err
 	}
 
-	dname := spec.Datapath
-	if dname == "" {
-		dname = "discard"
-	}
 	dp, err := c.TxDatapaths.Build(dname, datapath.Options{
-		Addr: spec.Target, FrameSize: spec.PacketSize, Iface: spec.Iface, Queue: spec.Queue,
+		Addr: spec.Target, FrameSize: block, Iface: spec.Iface, Queue: spec.Queue,
 	})
 	if err != nil {
 		return nil, err
@@ -74,7 +91,7 @@ func Build(spec Spec, c *components.Components) (*Flow, error) {
 		Generator: gen,
 		Scheduler: sched,
 		Datapath:  dp,
-		MTU:       spec.PacketSize,
+		MTU:       block,
 		Stop:      Stop{After: spec.Duration, Count: spec.Count, Volume: spec.Volume},
 	}, nil
 }
