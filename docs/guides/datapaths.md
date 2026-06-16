@@ -31,9 +31,9 @@ That's how loom approaches NIC line rate. The cost is operational:
 
 - it needs a **real NIC** (or a `veth` pair for testing) and **root**
   (`CAP_NET_RAW` + `CAP_BPF`);
-- it's compiled into `loomd` with a **build tag** (`go build -tags afxdp
-  ./cmd/loomd`) — a default `loomd` will reject `datapath: afxdp` with
-  `InvalidArgument`;
+- it's behind a **build tag** (`-tags afxdp`). **Released `loomd` binaries are
+  built with it**, so `datapath: afxdp` works out of the box; only a hand-built
+  `go build ./cmd/loomd` (no tag) rejects it with `InvalidArgument`;
 - it operates at **layer 2**: it sends raw Ethernet frames. The controller
   automatically uses the **`ethernet` generator** for `afxdp` flows, which crafts
   valid Ethernet/IPv4/UDP headers and resolves the peer's MAC (the endpoints must

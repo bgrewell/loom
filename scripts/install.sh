@@ -174,4 +174,19 @@ esac
 info "installed to $BINDIR:"
 for b in "${BINS[@]}"; do printf '    %s\n' "$BINDIR/$b"; done
 "$BINDIR/loom" --version 2>/dev/null | head -1 || true
+
+# AF_XDP readiness note: the released loomd has the AF_XDP datapath built in, but
+# using it (datapath: afxdp) needs root and a reasonably recent kernel.
+case " ${BINS[*]} " in
+*" loomd "*)
+	kver="$(uname -r 2>/dev/null)"
+	kmaj="${kver%%.*}"
+	if [ "${kmaj:-0}" -lt 5 ] 2>/dev/null; then
+		warn "loomd includes AF_XDP, but this kernel ($kver) is old — AF_XDP needs ~5.x+. Socket datapaths (udp/tcp) work regardless."
+	else
+		info "loomd includes AF_XDP (datapath: afxdp) — it needs root + an XDP-capable NIC; socket datapaths need neither."
+	fi
+	;;
+esac
+
 info "done. Next: loom run --help   (docs: https://github.com/$REPO/tree/main/docs)"
