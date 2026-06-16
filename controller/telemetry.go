@@ -21,6 +21,8 @@ type FlowSample struct {
 	Event      string
 	FlowID     string
 	Role       Role
+	From       string
+	To         string
 	Bytes      uint64
 	Packets    uint64
 	BitsPerSec float64
@@ -237,7 +239,7 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 		t.mu.Lock()
 		// Cumulative, for the end-of-run summary.
 		t.latest[key] = FlowSample{
-			Event: p.Event, FlowID: p.FlowID, Role: p.Role,
+			Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To,
 			Bytes: s.GetBytes(), Packets: s.GetPackets(),
 		}
 		// Fold a full interval's delta into its bucket. The final (trailing partial)
@@ -283,7 +285,7 @@ func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
 	}
 	b.reported[p.Key()] = true
 	b.flows[p.Key()] = FlowSample{
-		Event: p.Event, FlowID: p.FlowID, Role: p.Role,
+		Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To,
 		Bytes: s.GetIntervalBytes(), Packets: s.GetIntervalPackets(),
 		BitsPerSec: bitsPerNanos(s.GetIntervalBytes(), s.GetIntervalNanos()),
 	}

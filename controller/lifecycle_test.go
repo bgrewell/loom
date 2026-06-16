@@ -77,23 +77,27 @@ func TestAggregateSummary(t *testing.T) {
 			{Event: "blast", Role: Receiver, Bytes: 124_000_000},
 		},
 	}
-	out := a.Summary(time.Second, true, false)
+	out := a.Summary("summ-test", time.Second, true, false)
 	if !strings.Contains(out, "--- summary (authoritative) ---") {
 		t.Fatalf("missing summary header: %q", out)
+	}
+	// Header carries scenario, duration, and stream count.
+	if !strings.Contains(out, "scenario   summ-test") || !strings.Contains(out, "streams    1") {
+		t.Errorf("summary header missing scenario/streams: %q", out)
 	}
 	if !strings.Contains(out, "125.00 MB") || !strings.Contains(out, "avg 1.00 Gbps") {
 		t.Errorf("summary totals/avg wrong: %q", out)
 	}
-	// per-flow lines present
-	if !strings.Contains(out, "sender") || !strings.Contains(out, "receiver") {
+	// per-flow lines present (the event name only appears in per-flow rows).
+	if !strings.Contains(out, "blast") {
 		t.Errorf("summary missing per-flow rows: %q", out)
 	}
-	// Without perFlow, no per-row breakdown.
-	if strings.Contains(a.Summary(time.Second, false, false), "receiver") {
+	// Without perFlow, no per-row breakdown (event name absent).
+	if strings.Contains(a.Summary("summ-test", time.Second, false, false), "blast") {
 		t.Error("non-per-flow summary should not list individual flows")
 	}
 	// The live-incomplete note appears only when flagged.
-	if !strings.Contains(a.Summary(time.Second, false, true), "reconciled") {
+	if !strings.Contains(a.Summary("summ-test", time.Second, false, true), "reconciled") {
 		t.Error("expected reconciled note when liveIncomplete is set")
 	}
 }

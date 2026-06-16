@@ -155,9 +155,9 @@ func runScenario(ctx *stencil.Context) error {
 	// so the summary is consistent with the per-interval lines.
 	dur := testDuration(sc, time.Since(runStart))
 	if jsonOut {
-		printJSONSummary(os.Stdout, summary, dur, tel.LiveIncomplete())
+		printJSONSummary(os.Stdout, sc.Name, summary, dur, tel.LiveIncomplete())
 	} else {
-		fmt.Fprint(os.Stdout, summary.Summary(dur, perFlow, tel.LiveIncomplete()))
+		fmt.Fprint(os.Stdout, summary.Summary(sc.Name, dur, perFlow, tel.LiveIncomplete()))
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func testDuration(sc *scenario.Scenario, fallback time.Duration) time.Duration {
 }
 
 // printJSONSummary writes a final machine-readable summary object.
-func printJSONSummary(w *os.File, a controller.Aggregate, dur time.Duration, liveIncomplete bool) {
+func printJSONSummary(w *os.File, scenario string, a controller.Aggregate, dur time.Duration, liveIncomplete bool) {
 	secs := dur.Seconds()
 	avg := func(bytes uint64) float64 {
 		if secs <= 0 {
@@ -186,11 +186,14 @@ func printJSONSummary(w *os.File, a controller.Aggregate, dur time.Duration, liv
 		}
 		return float64(bytes) * 8 / secs
 	}
+	streams, _ := controller.StreamSummary(a.Flows)
 	enc := json.NewEncoder(w)
 	_ = enc.Encode(map[string]any{
 		"summary":          true,
 		"authoritative":    true,
+		"scenario":         scenario,
 		"duration_seconds": secs,
+		"streams":          streams,
 		"tx_bytes":         a.TxBytes,
 		"rx_bytes":         a.RxBytes,
 		"tx_avg_bps":       avg(a.TxBytes),
