@@ -54,6 +54,24 @@ choose_bindir() {
 BINDIR="$(choose_bindir)"
 mkdir -p "$BINDIR" || die "cannot create install dir $BINDIR"
 
+# Warn about the common footgun: upgrading as a normal user while a system-wide
+# loomd service runs a root-owned binary in another directory. The user install
+# lands in ~/.local/bin (and wins on PATH, so `loomd --version` looks updated),
+# but the service keeps launching the stale binary. Tell them how to fix it.
+warn_service_skew() {
+	[ "$(id -u)" -eq 0 ] && return 0 # a root install reaches the system path
+	command -v systemctl >/dev/null 2>&1 || return 0
+	local exec dir
+	exec="$(systemctl show -p ExecStart --value loomd.service 2>/dev/null | sed -n 's/.*path=\([^ ;]*\).*/\1/p')"
+	[ -n "$exec" ] || return 0
+	dir="$(dirname "$exec")"
+	[ "$dir" = "$BINDIR" ] && return 0 # we're updating the binary the service runs
+	warn "a loomd systemd service runs $exec, but this non-root install targets $BINDIR."
+	warn "the service will keep running the OLD binary after this. To update the service binary, re-run as root:"
+	warn "  curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install.sh | sudo LOOM_PREFIX=$dir bash"
+}
+warn_service_skew
+
 # --- resolve version ---
 latest_tag() {
 	curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null |
