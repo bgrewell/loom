@@ -4,21 +4,36 @@
 package datapath
 
 import (
+	"fmt"
 	"net"
 	"net/netip"
 	"time"
+
+	"golang.org/x/net/ipv4"
+	"golang.org/x/sys/unix"
 )
 
-// recvDeadline bounds the first read in each poll so the receive loop can observe
-// context cancellation between polls.
+// recvDeadline bounds a poll so the receive loop can observe context
+// cancellation between polls.
 const recvDeadline = 200 * time.Millisecond
+
+// udpRcvBuf is the requested socket receive buffer (SO_RCVBUF). A large buffer
+// absorbs bursts while the receiver batches reads, cutting drops at high pps.
+// Best-effort: the kernel clamps to net.core.rmem_max.
+const udpRcvBuf = 8 << 20
 
 // UDPListener is a receive-side datapath: it binds a UDP port and reads inbound
 // datagrams into pooled frames. Used by an agent acting as a flow's receiver
 // after ephemeral-port negotiation.
+//
+// A poll reads the whole batch with one recvmmsg syscall (via ipv4.PacketConn's
+// ReadBatch) instead of a recvfrom per datagram, so the per-packet syscall cost
+// is amortized — the lever that lets the receiver keep up at high pps.
 type UDPListener struct {
-	conn net.PacketConn
-	pool *framePool
+	conn  *net.UDPConn
+	batch *ipv4.PacketConn
+	pool  *framePool
+	msgs  []ipv4.Message // reused scratch for ReadBatch
 }
 
 // ListenUDP binds a UDP socket at addr (use ":0" for an ephemeral port) with
@@ -28,7 +43,13 @@ func ListenUDP(addr string, frameSize int) (*UDPListener, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &UDPListener{conn: pc, pool: newFramePool(defaultPoolDepth, frameSize)}, nil
+	uc, ok := pc.(*net.UDPConn)
+	if !ok {
+		_ = pc.Close()
+		return nil, fmt.Errorf("udp: expected *net.UDPConn, got %T", pc)
+	}
+	_ = uc.SetReadBuffer(udpRcvBuf) // best-effort burst headroom
+	return &UDPListener{conn: uc, batch: ipv4.NewPacketConn(uc), pool: newFramePool(defaultPoolDepth, frameSize)}, nil
 }
 
 // Port returns the bound local UDP port.
@@ -45,36 +66,34 @@ func (*UDPListener) Name() string { return "udp-listen" }
 // Caps implements RxDatapath.
 func (*UDPListener) Caps() Capabilities { return Capabilities{} }
 
-// RxPoll reads up to max datagrams into frames. The first read blocks up to
-// recvDeadline (so the caller can check cancellation on a timeout); subsequent
-// reads drain only what is already queued. A timeout with no datagrams returns a
-// net.Error with Timeout()==true.
+// RxPoll reads up to max datagrams in one recvmmsg. It blocks up to recvDeadline
+// for the first datagram (MSG_WAITFORONE returns as soon as one arrives, with any
+// others already queued), so a timeout with no datagrams returns a net.Error with
+// Timeout()==true and the receiver loop can check cancellation.
 func (l *UDPListener) RxPoll(max int) ([]Frame, error) {
 	frames := l.pool.take(max)
 	if len(frames) == 0 {
 		return nil, nil
 	}
-	got := 0
-	for got < len(frames) {
-		if got == 0 {
-			_ = l.conn.SetReadDeadline(time.Now().Add(recvDeadline))
-		} else {
-			_ = l.conn.SetReadDeadline(time.Now()) // non-blocking drain of the backlog
-		}
-		buf := frames[got].Data
-		n, src, err := l.conn.ReadFrom(buf[:cap(buf)])
-		if err != nil {
-			if got > 0 {
-				break // return what we have; the timeout is expected mid-drain
-			}
-			l.pool.release()
-			return nil, err
-		}
-		frames[got].Len = n
-		frames[got].Meta = Meta{Nanos: time.Now().UnixNano(), Src: addrPort(src)}
-		got++
+	for len(l.msgs) < len(frames) {
+		l.msgs = append(l.msgs, ipv4.Message{Buffers: make([][]byte, 1)})
 	}
-	return frames[:got], nil
+	for i := range frames {
+		b := frames[i].Data
+		l.msgs[i].Buffers[0] = b[:cap(b)]
+	}
+	_ = l.conn.SetReadDeadline(time.Now().Add(recvDeadline))
+	n, err := l.batch.ReadBatch(l.msgs[:len(frames)], unix.MSG_WAITFORONE)
+	if err != nil {
+		l.pool.release()
+		return nil, err
+	}
+	now := time.Now().UnixNano()
+	for i := 0; i < n; i++ {
+		frames[i].Len = l.msgs[i].N
+		frames[i].Meta = Meta{Nanos: now, Src: addrPort(l.msgs[i].Addr)}
+	}
+	return frames[:n], nil
 }
 
 // RxRelease returns polled frames to the pool.
