@@ -34,9 +34,11 @@ That's how loom approaches NIC line rate. The cost is operational:
 - it's compiled into `loomd` with a **build tag** (`go build -tags afxdp
   ./cmd/loomd`) — a default `loomd` will reject `datapath: afxdp` with
   `InvalidArgument`;
-- it operates at **layer 2**: it sends raw Ethernet frames, so over a real
-  network you need frames with valid headers (fine for raw-rate tests over a
-  direct link or veth today; a header-crafting generator is on the roadmap).
+- it operates at **layer 2**: it sends raw Ethernet frames. The controller
+  automatically uses the **`ethernet` generator** for `afxdp` flows, which crafts
+  valid Ethernet/IPv4/UDP headers and resolves the peer's MAC (the endpoints must
+  be on the **same L2 segment** — bridge or SR-IOV VFs — so ARP can resolve).
+  Frames carry only UDP today; TCP over AF_XDP would need a userspace TCP stack.
 
 > **Rule of thumb.** Reach for `udp`/`tcp` first — they're simpler and fast
 > enough for most tests. Move to `afxdp` when you're pushing packet rates the

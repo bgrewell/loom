@@ -29,6 +29,11 @@ import (
 	"github.com/bgrewell/loom/core/units"
 )
 
+// afxdpDataPort is the nominal UDP destination port stamped into AF_XDP frames.
+// The receiver's AF_XDP socket captures every frame on its queue regardless of
+// port, so this only needs to be a valid, consistent value.
+const afxdpDataPort = 9999
+
 // Role distinguishes the two flows a fire creates.
 type Role int
 
@@ -248,16 +253,20 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return fmt.Errorf("event %q: configure receiver: %w", ev.Name, err)
 	}
 
-	// Sender on the source agent. Socket datapaths target the receiver's data
-	// address; NIC-bound datapaths (afxdp, raw L2) ignore it and use the iface.
-	var target string
-	if dp != "afxdp" {
-		dataHost := to.Address
-		if dataHost == "" {
-			dataHost = hostOf(toAddr)
-		}
-		target = net.JoinHostPort(dataHost, strconv.Itoa(int(rxCfg.GetDataPort())))
+	// Sender on the source agent, targeting the receiver's data address. Socket
+	// datapaths send to that host:port; the AF_XDP datapath ignores it for delivery
+	// (it sends raw frames over the NIC) but its ethernet generator uses it as the
+	// dst IP/MAC when crafting frames — the receiver captures every frame on its
+	// queue, so the port is nominal.
+	dataHost := to.Address
+	if dataHost == "" {
+		dataHost = hostOf(toAddr)
 	}
+	port := int(rxCfg.GetDataPort())
+	if dp == "afxdp" {
+		port = afxdpDataPort
+	}
+	target := net.JoinHostPort(dataHost, strconv.Itoa(port))
 	txCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: senderSpec(ev, dp, target, from, c.s.Seed)})
 	if err != nil {
 		return fmt.Errorf("event %q: configure sender: %w", ev.Name, err)
@@ -393,11 +402,18 @@ func (c *Controller) track(agent loomv1.ControlClient, addr, id string, role Rol
 // for NIC-bound datapaths). If the event's flow kind names an emulation, the spec
 // carries it (and its params) so the agent runs the behavior engine.
 func senderSpec(ev scenario.Event, dp, target string, from scenario.Endpoint, seed int64) *loomv1.FlowSpec {
+	// AF_XDP bypasses the kernel stack, so the sender must emit complete Ethernet/
+	// IPv4/UDP frames — use the ethernet (frame-crafting) generator. Socket
+	// datapaths let the kernel build headers, so they use the plain stream.
+	gen := "stream"
+	if dp == "afxdp" {
+		gen = "ethernet"
+	}
 	spec := &loomv1.FlowSpec{
 		Role:       loomv1.FlowRole_FLOW_ROLE_SENDER,
 		Datapath:   dp,
 		Target:     target,
-		Generator:  "stream",
+		Generator:  gen,
 		PacketSize: int32ToU32(packetSize(ev)),
 		Iface:      from.Iface,
 		Queue:      int32ToU32(from.Queue),

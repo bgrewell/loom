@@ -17,6 +17,7 @@ import (
 	"github.com/bgrewell/loom/core/datapath"
 	"github.com/bgrewell/loom/core/emul"
 	"github.com/bgrewell/loom/core/flow"
+	"github.com/bgrewell/loom/core/frameaddr"
 )
 
 // managedFlow is one flow the agent holds across its lifecycle. run is the
@@ -220,6 +221,15 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 	spec, err := toSpec(p)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "flow spec: %v", err)
+	}
+	// The ethernet generator (raw datapaths like AF_XDP) emits complete frames, so
+	// resolve this NIC's L2/L3 addressing and the peer's MAC for the target.
+	if spec.Generator == "ethernet" {
+		fo, rerr := frameaddr.Resolve(spec.Iface, spec.Target)
+		if rerr != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "frame addressing: %v", rerr)
+		}
+		spec.Frame = fo
 	}
 	fl, err := flow.Build(spec, s.comps)
 	if err != nil {
