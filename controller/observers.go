@@ -209,12 +209,8 @@ func tcpLine(f FlowSample) string {
 	if t.Ssthresh >= 1<<30 { // kernel reports ~INT_MAX while still in slow start
 		ssthresh = "∞"
 	}
-	dir := flowDir(f)
-	if dir != "" {
-		dir = "   (" + dir + ")"
-	}
-	return fmt.Sprintf("  tcp        retrans %d  lost %d  rtt %.2fms ±%.2f  cwnd %d seg  ssthresh %s%s\n",
-		t.Retrans, t.Lost, float64(t.RttUs)/1000, float64(t.RttvarUs)/1000, t.Cwnd, ssthresh, dir)
+	return fmt.Sprintf("  tcp  %-10s %-15s retrans %d  lost %d  rtt %.2fms ±%.2f  cwnd %d seg  ssthresh %s\n",
+		f.Event, flowDir(f), t.Retrans, t.Lost, float64(t.RttUs)/1000, float64(t.RttvarUs)/1000, t.Cwnd, ssthresh)
 }
 
 // StreamSummary counts the distinct streams (events) in the flows and lists their

@@ -129,8 +129,8 @@ func TestSummaryLossAndTCPDiagnostics(t *testing.T) {
 		},
 	}
 	out = tcp.Summary("t", time.Second, false, false)
-	if !strings.Contains(out, "tcp ") || !strings.Contains(out, "retrans 12") || !strings.Contains(out, "cwnd 76") {
-		t.Errorf("tcp diagnostics line missing/wrong: %q", out)
+	if !strings.Contains(out, "tcp  stream") || !strings.Contains(out, "retrans 12") || !strings.Contains(out, "cwnd 76") {
+		t.Errorf("tcp diagnostics line missing stream label or stats: %q", out)
 	}
 	if !strings.Contains(out, "ssthresh ∞") { // INT_MAX during slow start renders as ∞
 		t.Errorf("large ssthresh should render as ∞: %q", out)
