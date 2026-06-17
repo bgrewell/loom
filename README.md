@@ -39,6 +39,25 @@ $ loomctl run -f test.yaml -a 'client=10.0.0.1:9551,server=10.0.0.2:9551'
 The run ends as soon as the flow finishes (not at the horizon); add `--per-flow`
 for a per-flow breakdown — handy when flows take different network paths.
 
+**Or the iperf3-style shortcut** — no scenario file. Stand up a server (or just
+point at a running `loomd`) and drive a test from the client with flags:
+
+```console
+# on the server host (skip if a loomd is already running there)
+$ loom server
+
+# from the client host: 10s TCP test, then a 1 Gbps UDP test, then reverse
+$ loom client 10.0.0.2 -t 10
+$ loom client 10.0.0.2 -t 10 -u -b 1G
+$ loom client 10.0.0.2 -t 10 -R          # server → client
+[14:03:01] stream-0  server→client  tx 9.41 Gbps  rx 9.41 Gbps  tcp retrans +0 cwnd 1840 rtt 0.21ms
+...
+```
+
+Familiar flags: `-t` time, `-u` UDP, `-b` bitrate, `-l` length, `-P` parallel,
+`-R` reverse, `--bidir`, `-n` bytes, `-J` JSON. The summary reports loss and, for
+TCP, per-stream retransmits/RTT/cwnd.
+
 **Or a quick one-host check** — generate, pace, and measure a flow locally with
 no receiver (the `discard` datapath drops after accounting):
 
