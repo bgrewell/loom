@@ -55,6 +55,7 @@ nav:
       - Testing: testing.md
       - CI / CD: ci-cd.md
       - Design notes: blueprints/README.md
+      - "Design: real application traffic": design/real-app-traffic.md
 
 validation:
   nav:
