@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package components bundles the pluggable registries (datapath/generator/
-// scheduler/payload/netpath) into one injectable value (ADR-0022), so a flow builder or
+// scheduler/payload/netpath/app) into one injectable value (ADR-0022), so a flow builder or
 // an agent depends on an explicit Components rather than reaching into global
 // singletons. Default() returns the standard set backed by the package
 // registries — which the built-in factories (and build-tagged backends like
@@ -11,6 +11,7 @@
 package components
 
 import (
+	"github.com/bgrewell/loom/core/app"
 	"github.com/bgrewell/loom/core/datapath"
 	"github.com/bgrewell/loom/core/generator"
 	"github.com/bgrewell/loom/core/netpath"
@@ -27,6 +28,8 @@ type Components struct {
 	Schedulers  *registry.Registry[scheduler.Scheduler, scheduler.Options]
 	Payloads    *registry.Registry[payload.Payloader, payload.Options]
 	Networks    *registry.Registry[netpath.Network, netpath.Options]
+	AppClients  *registry.Registry[app.Client, app.Options]
+	AppServers  *registry.Registry[app.Server, app.Options]
 }
 
 // Default returns the standard component set, backed by the package-level
@@ -39,6 +42,8 @@ func Default() *Components {
 		Schedulers:  scheduler.Registry,
 		Payloads:    payload.Registry,
 		Networks:    netpath.Registry,
+		AppClients:  app.ClientRegistry,
+		AppServers:  app.ServerRegistry,
 	}
 }
 

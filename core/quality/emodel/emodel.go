@@ -116,33 +116,35 @@ type Input struct {
 // Components is the audited breakdown of one Score call, exposing every term
 // of R = Ro − Is − Id − IeEff + A so a rating can be attributed to noise,
 // simultaneous impairment, echo, delay or loss rather than trusted blindly.
+// The JSON tags carry the breakdown through the core/metrics results plane in
+// loom's snake_case serialization style.
 type Components struct {
 	// Ro is the basic signal-to-noise ratio (G.107 §7.2); 129 for wideband
 	// (G.107.1 eq. 7-2).
-	Ro float64
+	Ro float64 `json:"ro"`
 	// Is is the simultaneous impairment Iolr + Ist + Iq (G.107 §7.3); 0 for
 	// wideband (G.107.1 eq. 7-3).
-	Is float64
+	Is float64 `json:"is"`
 	// Idte is the talker-echo impairment (G.107 eq. 7-19 / G.107.1 eq. 7-5)
 	// at T = Ta; 0 for T < 1 ms narrowband (echo is sidetone, G.107 §7.4).
-	Idte float64
+	Idte float64 `json:"idte"`
 	// Idle is the listener-echo impairment (G.107 eq. 7-25) at Tr = 2·Ta.
-	Idle float64
+	Idle float64 `json:"idle"`
 	// Idd is the pure-delay impairment (G.107 eq. 7-27, sT = 1, mT = 100 ms;
 	// ×1.29 for wideband per G.107.1 eq. 7-13): 0 for Ta ≤ 100 ms.
-	Idd float64
+	Idd float64 `json:"idd"`
 	// Id is Idte + Idle + Idd (G.107 eq. 7-18).
-	Id float64
+	Id float64 `json:"id"`
 	// Ie is the codec's equipment impairment factor at zero loss (IeWB when
 	// scoring wideband).
-	Ie float64
+	Ie float64 `json:"ie"`
 	// IeEff is the effective equipment impairment after loss and burstiness
 	// (G.107 eq. 7-29): Ie + (95 − Ie)·Ppl/(Ppl/BurstR + Bpl).
-	IeEff float64
+	IeEff float64 `json:"ie_eff"`
 	// A is the advantage factor applied (Config.A).
-	A float64
+	A float64 `json:"a"`
 	// R is the transmission rating factor: Ro − Is − Id − IeEff + A.
-	R float64
+	R float64 `json:"r"`
 }
 
 // Result is a scored interval.

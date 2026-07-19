@@ -20,6 +20,12 @@ const (
 // live slot.
 const windowSize = 4096
 
+// maxMediaGaps bounds the retained media-gap list: a long-running session
+// over a flapping path must not grow memory (or snapshot copy cost) without
+// bound, so once the cap is reached the oldest gap is dropped for each new
+// one — recent history is what handover correlation needs.
+const maxMediaGaps = 512
+
 // pktClass is the A.1 disposition of one observed packet.
 type pktClass int
 
@@ -36,9 +42,12 @@ const (
 // number of sequence numbers missing inside the gap (0 when the gap was pure
 // delay, when the stream re-initialized across it, or when the packet closing
 // it was a straggler rather than an in-order advance).
+// The JSON tags carry Gaps through the core/metrics results plane in loom's
+// snake_case serialization style.
 type Gap struct {
-	Start, End  time.Time
-	PacketsLost uint32
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"`
+	PacketsLost uint32    `json:"packets_lost"`
 }
 
 // RxSnapshot is a receiver-statistics summary, either cumulative or for one
@@ -354,6 +363,12 @@ func (s *ReceiverStats) Observe(h Header, payloadLen int, arrival time.Time) {
 			if class == pktInOrder && ext > s.lastExt+1 {
 				lost = uint32(ext - s.lastExt - 1)
 			}
+			if len(s.gaps) >= maxMediaGaps {
+				s.gaps = s.gaps[:copy(s.gaps, s.gaps[1:])]
+				if s.ivGapIdx > 0 {
+					s.ivGapIdx--
+				}
+			}
 			s.gaps = append(s.gaps, Gap{Start: s.lastArrival, End: arrival, PacketsLost: lost})
 		}
 	}
@@ -409,6 +424,14 @@ func (s *ReceiverStats) extHighest() uint32 {
 // precision.
 func (s *ReceiverStats) jitterMs() float64 {
 	return float64(s.jitter) / 16 / float64(s.clockRate) * 1000
+}
+
+// Counts returns the hot-path subset of Cumulative without allocating (no
+// media-gap copy): packets received (duplicates included, per the RFC),
+// duplicates, A.3 expected, and the extended highest sequence number. Like
+// Cumulative it never modifies interval state.
+func (s *ReceiverStats) Counts() (received, duplicates, expected uint64, extHighest uint32) {
+	return s.received, s.duplicates, s.expected(), s.extHighest()
 }
 
 // Cumulative returns lifetime statistics. It never modifies interval state,
