@@ -8,12 +8,17 @@
 package contract
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/bgrewell/loom/core/datapath"
 	"github.com/bgrewell/loom/core/generator"
+	"github.com/bgrewell/loom/core/netpath"
 	"github.com/bgrewell/loom/core/payload"
 	"github.com/bgrewell/loom/core/scheduler"
 )
@@ -96,6 +101,211 @@ func Generator(t testing.TB, g generator.Generator) {
 	small := make([]byte, 4)
 	if n, _ := g.Next(small); n > len(small) {
 		t.Errorf("%s: Next overran a %d-byte buffer (%d)", g.Name(), len(small), n)
+	}
+}
+
+// Network asserts a netpath.Network honors the connection-factory contract:
+// stream and packet round trips, listener close unblocking Accept, and the
+// ErrUnsupportedNetwork sentinel. dial and listen are the two ends — pass the
+// same Network twice when it is symmetric (e.g. Host on loopback). listenAddr
+// is a port-0 bind address valid on listen (e.g. "127.0.0.1:0" for Host, ":0"
+// for Memory).
+func Network(t testing.TB, dial, listen netpath.Network, listenAddr string) {
+	t.Helper()
+	if dial.Name() == "" || listen.Name() == "" {
+		t.Errorf("Network.Name() is empty")
+	}
+	networkStream(t, dial, listen, listenAddr)
+	networkPacket(t, dial, listen, listenAddr)
+	networkPacketDeadlineWake(t, listen, listenAddr)
+	networkAcceptUnblock(t, listen, listenAddr)
+	networkUnsupported(t, dial, listen, listenAddr)
+}
+
+// networkStream checks a Dial/Listen("tcp") echo round trip.
+func networkStream(t testing.TB, dial, listen netpath.Network, listenAddr string) {
+	t.Helper()
+	name := dial.Name()
+	ln, err := listen.Listen("tcp", listenAddr)
+	if err != nil {
+		t.Errorf("%s: Listen(tcp, %s): %v", name, listenAddr, err)
+		return
+	}
+	defer ln.Close()
+	served := make(chan error, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			served <- err
+			return
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(c, buf); err != nil {
+			served <- err
+			return
+		}
+		_, err = c.Write(buf)
+		served <- err
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := dial.DialContext(ctx, "tcp", ln.Addr().String())
+	if err != nil {
+		t.Errorf("%s: DialContext(tcp, %s): %v", name, ln.Addr(), err)
+		return
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	msg := []byte("ping")
+	if _, err := c.Write(msg); err != nil {
+		t.Errorf("%s: stream Write: %v", name, err)
+		return
+	}
+	echo := make([]byte, 4)
+	if _, err := io.ReadFull(c, echo); err != nil {
+		t.Errorf("%s: stream Read: %v", name, err)
+		return
+	}
+	if !bytes.Equal(echo, msg) {
+		t.Errorf("%s: stream echo = %q, want %q", name, echo, msg)
+	}
+	if err := <-served; err != nil {
+		t.Errorf("%s: stream serve: %v", name, err)
+	}
+}
+
+// networkPacket checks a ListenPacket("udp") echo round trip with addressing:
+// the server replies to ReadFrom's source address, and the client sees the
+// reply come from the server's bound address.
+func networkPacket(t testing.TB, dial, listen netpath.Network, listenAddr string) {
+	t.Helper()
+	name := dial.Name()
+	srv, err := listen.ListenPacket("udp", listenAddr)
+	if err != nil {
+		t.Errorf("%s: ListenPacket(udp, %s): %v", name, listenAddr, err)
+		return
+	}
+	defer srv.Close()
+	cli, err := dial.ListenPacket("udp", listenAddr)
+	if err != nil {
+		t.Errorf("%s: ListenPacket(udp, %s): %v", name, listenAddr, err)
+		return
+	}
+	defer cli.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	_ = srv.SetDeadline(deadline)
+	_ = cli.SetDeadline(deadline)
+	msg := []byte("ping")
+	if _, err := cli.WriteTo(msg, srv.LocalAddr()); err != nil {
+		t.Errorf("%s: packet WriteTo(%s): %v", name, srv.LocalAddr(), err)
+		return
+	}
+	buf := make([]byte, 64)
+	n, from, err := srv.ReadFrom(buf)
+	if err != nil {
+		t.Errorf("%s: packet ReadFrom: %v", name, err)
+		return
+	}
+	if !bytes.Equal(buf[:n], msg) {
+		t.Errorf("%s: packet payload = %q, want %q", name, buf[:n], msg)
+	}
+	if from == nil {
+		t.Errorf("%s: packet ReadFrom returned nil source addr", name)
+		return
+	}
+	if _, err := srv.WriteTo(buf[:n], from); err != nil {
+		t.Errorf("%s: packet reply WriteTo(%s): %v", name, from, err)
+		return
+	}
+	n, replyFrom, err := cli.ReadFrom(buf)
+	if err != nil {
+		t.Errorf("%s: packet reply ReadFrom: %v", name, err)
+		return
+	}
+	if !bytes.Equal(buf[:n], msg) {
+		t.Errorf("%s: packet reply payload = %q, want %q", name, buf[:n], msg)
+	}
+	if replyFrom == nil || replyFrom.String() != srv.LocalAddr().String() {
+		t.Errorf("%s: packet reply from %v, want %v", name, replyFrom, srv.LocalAddr())
+	}
+}
+
+// networkPacketDeadlineWake checks the net package's deadline contract on
+// packet conns: SetReadDeadline applies to "any currently-blocked Read call",
+// so the standard conn.SetReadDeadline(time.Now()) interrupt idiom must wake a
+// blocked ReadFrom with a timeout error (os.ErrDeadlineExceeded).
+func networkPacketDeadlineWake(t testing.TB, listen netpath.Network, listenAddr string) {
+	t.Helper()
+	name := listen.Name()
+	pc, err := listen.ListenPacket("udp", listenAddr)
+	if err != nil {
+		t.Errorf("%s: ListenPacket(udp, %s): %v", name, listenAddr, err)
+		return
+	}
+	defer pc.Close()
+	got := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 16)
+		_, _, err := pc.ReadFrom(buf)
+		got <- err
+	}()
+	time.Sleep(10 * time.Millisecond) // let ReadFrom block
+	_ = pc.SetReadDeadline(time.Now())
+	select {
+	case err := <-got:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Errorf("%s: blocked ReadFrom woke with %v, want os.ErrDeadlineExceeded", name, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Errorf("%s: blocked ReadFrom not woken within 2s of SetReadDeadline(now)", name)
+	}
+}
+
+// networkAcceptUnblock checks that closing a listener unblocks a pending
+// Accept with an error.
+func networkAcceptUnblock(t testing.TB, listen netpath.Network, listenAddr string) {
+	t.Helper()
+	name := listen.Name()
+	ln, err := listen.Listen("tcp", listenAddr)
+	if err != nil {
+		t.Errorf("%s: Listen(tcp, %s): %v", name, listenAddr, err)
+		return
+	}
+	got := make(chan error, 1)
+	go func() {
+		_, err := ln.Accept()
+		got <- err
+	}()
+	time.Sleep(10 * time.Millisecond) // let Accept block
+	_ = ln.Close()
+	select {
+	case err := <-got:
+		if err == nil {
+			t.Errorf("%s: Accept returned nil error after Close", name)
+		}
+	case <-time.After(2 * time.Second):
+		t.Errorf("%s: Accept did not unblock within 2s of Close", name)
+	}
+}
+
+// networkUnsupported checks the ErrUnsupportedNetwork sentinel: an unknown
+// network name, a datagram network passed to Listen, and a stream network
+// passed to ListenPacket must all match via errors.Is.
+func networkUnsupported(t testing.TB, dial, listen netpath.Network, listenAddr string) {
+	t.Helper()
+	name := dial.Name()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := dial.DialContext(ctx, "unix", "/nonexistent"); !errors.Is(err, netpath.ErrUnsupportedNetwork) {
+		t.Errorf("%s: DialContext(unix) error = %v, want ErrUnsupportedNetwork", name, err)
+	}
+	if _, err := listen.Listen("udp", listenAddr); !errors.Is(err, netpath.ErrUnsupportedNetwork) {
+		t.Errorf("%s: Listen(udp) error = %v, want ErrUnsupportedNetwork", name, err)
+	}
+	if _, err := listen.ListenPacket("tcp", listenAddr); !errors.Is(err, netpath.ErrUnsupportedNetwork) {
+		t.Errorf("%s: ListenPacket(tcp) error = %v, want ErrUnsupportedNetwork", name, err)
 	}
 }
 

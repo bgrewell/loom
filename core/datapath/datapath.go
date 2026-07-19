@@ -10,7 +10,14 @@ package datapath
 // Capabilities describes what a datapath backend supports, so the orchestrator
 // can validate a scenario against the available hardware.
 type Capabilities struct {
-	RawL2              bool   // can send/receive raw layer-2 frames
+	RawL2 bool // can send/receive raw layer-2 frames
+	// RawL3 means frames are complete IP packets: L3-consuming components
+	// (UDP-with-real-headers networks, userspace TCP stacks) require it to
+	// validate a backend. It is false for every built-in backend — the
+	// socket/memory/discard datapaths carry opaque payload bytes and AF_XDP
+	// carries L2 frames — and true for embedder-provided raw-L3 datapaths
+	// (e.g. a GTP-U inner-IP path).
+	RawL3              bool
 	HardwareTimestamps bool   // exposes NIC hardware timestamps
 	MaxPPS             uint64 // advisory max packets/sec, 0 = unspecified
 }

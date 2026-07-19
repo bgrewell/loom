@@ -5,8 +5,10 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/bgrewell/loom/core/emul"
 	"github.com/bgrewell/loom/core/flow"
 	"github.com/bgrewell/loom/core/frameaddr"
+	"github.com/bgrewell/loom/core/netpath"
 )
 
 // managedFlow is one flow the agent holds across its lifecycle. run is the
@@ -163,7 +166,7 @@ func (m *flowManager) destroy(id string) error {
 
 // Configure builds and stores a flow, returning its id. Ephemeral data-port
 // assignment is a later step; data_port is 0 for now.
-func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*loomv1.ConfigureResponse, error) {
+func (s *Server) Configure(ctx context.Context, req *loomv1.ConfigureRequest) (*loomv1.ConfigureResponse, error) {
 	p := req.GetFlow()
 
 	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_REFLECTOR {
@@ -209,7 +212,7 @@ func (s *Server) Configure(_ context.Context, req *loomv1.ConfigureRequest) (*lo
 	// Requester: the client side of a request/response emulation. Compiles the
 	// named emulation to a behavior script and drives it against the responder.
 	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_REQUESTER {
-		return s.configureRequester(p)
+		return s.configureRequester(ctx, p)
 	}
 
 	// Emulation sender: a behavior-script runner over the chosen datapath.
@@ -281,6 +284,40 @@ func (s *Server) configureEmulation(p *loomv1.FlowSpec) (*loomv1.ConfigureRespon
 	return &loomv1.ConfigureResponse{FlowId: id}, nil
 }
 
+// network resolves the Network request/response flows dial and listen through.
+// Until FlowSpec carries a network name it is always the registry's "host"
+// entry, resolved through s.comps so an injected component set (tests,
+// embedders) substitutes its own fabric. Component sets that predate the
+// Networks registry (embedder struct literals leave the new field nil) fall
+// back to the kernel stack — the behavior before the netpath seam existed —
+// rather than dereferencing a nil registry. The caller owns the returned
+// Network and must arrange for its Close (see joinClosers).
+func (s *Server) network() (netpath.Network, error) {
+	if s.comps.Networks == nil {
+		return netpath.Host(netip.Addr{}), nil
+	}
+	n, err := s.comps.Networks.Build("host", netpath.Options{})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "build network: %v", err)
+	}
+	return n, nil
+}
+
+// joinClosers bundles a flow's closeable resources (runner + the Network it
+// was built over) into the single io.Closer the flowManager holds, so destroy
+// releases the network too — an injected factory may return a resource-owning
+// Network (datapaths, receive goroutines), not just the no-op host handle.
+type joinClosers []io.Closer
+
+// Close implements io.Closer, closing in order and joining the errors.
+func (cs joinClosers) Close() error {
+	errs := make([]error, 0, len(cs))
+	for _, c := range cs {
+		errs = append(errs, c.Close())
+	}
+	return errors.Join(errs...)
+}
+
 // configureResponder binds a request/response responder on an ephemeral port and
 // reports it as data_port so the controller can target it from the requester.
 func (s *Server) configureResponder(p *loomv1.FlowSpec) (*loomv1.ConfigureResponse, error) {
@@ -290,14 +327,20 @@ func (s *Server) configureResponder(p *loomv1.FlowSpec) (*loomv1.ConfigureRespon
 	if err := validateTransport(p.GetTransport()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
-	resp, err := emul.ListenResponder(p.GetTransport(), int(p.GetPacketSize()))
+	n, err := s.network()
 	if err != nil {
+		return nil, err
+	}
+	resp, err := emul.NewResponder(n, p.GetTransport(), int(p.GetPacketSize()))
+	if err != nil {
+		_ = n.Close() // release the network we just built
 		return nil, status.Errorf(codes.InvalidArgument, "build responder: %v", err)
 	}
 	port := uint32(resp.Port())
-	id, err := s.mgr.configure(resp, resp, port)
+	id, err := s.mgr.configure(resp, joinClosers{resp, n}, port)
 	if err != nil {
 		_ = resp.Close() // release the bound port we just took
+		_ = n.Close()
 		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
 	}
 	return &loomv1.ConfigureResponse{FlowId: id, DataPort: port}, nil
@@ -306,7 +349,7 @@ func (s *Server) configureResponder(p *loomv1.FlowSpec) (*loomv1.ConfigureRespon
 // configureRequester compiles the named emulation to a behavior script and dials
 // the responder at target, preparing a request/response runner. The connection
 // is opened at configure time, so the responder must already be listening.
-func (s *Server) configureRequester(p *loomv1.FlowSpec) (*loomv1.ConfigureResponse, error) {
+func (s *Server) configureRequester(ctx context.Context, p *loomv1.FlowSpec) (*loomv1.ConfigureResponse, error) {
 	if err := validatePacketSize(p.GetPacketSize()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
@@ -327,13 +370,19 @@ func (s *Server) configureRequester(p *loomv1.FlowSpec) (*loomv1.ConfigureRespon
 	if d := p.GetDuration(); d != nil {
 		dur = d.AsDuration()
 	}
-	req, err := emul.DialRequester(p.GetTransport(), p.GetTarget(), script, int(p.GetPacketSize()), dur, p.GetCount(), p.GetVolume(), p.GetSeed())
+	n, err := s.network()
 	if err != nil {
+		return nil, err
+	}
+	req, err := emul.NewRequester(ctx, n, p.GetTransport(), p.GetTarget(), script, int(p.GetPacketSize()), dur, p.GetCount(), p.GetVolume(), p.GetSeed())
+	if err != nil {
+		_ = n.Close() // release the network we just built
 		return nil, status.Errorf(codes.Unavailable, "dial responder: %v", err)
 	}
-	id, err := s.mgr.configure(req, req, 0)
+	id, err := s.mgr.configure(req, joinClosers{req, n}, 0)
 	if err != nil {
 		_ = req.Close() // release the connection we just dialed
+		_ = n.Close()
 		return nil, status.Errorf(codes.ResourceExhausted, "%v", err)
 	}
 	return &loomv1.ConfigureResponse{FlowId: id}, nil

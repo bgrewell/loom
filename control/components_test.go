@@ -43,3 +43,32 @@ func TestCapabilitiesFromInjectedComponents(t *testing.T) {
 		t.Fatalf("expected empty generators/payloads, got %v/%v", resp.GetGenerators(), resp.GetPayloads())
 	}
 }
+
+// TestConfigureWithPartialComponents: a Components literal that predates the
+// Networks registry (the field is nil) must not crash Configure — the agent
+// falls back to the kernel stack instead of dereferencing a nil registry.
+func TestConfigureWithPartialComponents(t *testing.T) {
+	c := &components.Components{
+		TxDatapaths: registry.New[datapath.TxDatapath, datapath.Options](),
+		RxDatapaths: registry.New[datapath.RxDatapath, datapath.Options](),
+		Generators:  registry.New[generator.Generator, generator.Options](),
+		Schedulers:  registry.New[scheduler.Scheduler, scheduler.Options](),
+		Payloads:    registry.New[payload.Payloader, payload.Options](),
+		// Networks intentionally nil: pre-existing embedder pattern.
+	}
+	srv := NewServer("t", WithComponents(c))
+	resp, err := srv.Configure(context.Background(), &loomv1.ConfigureRequest{Flow: &loomv1.FlowSpec{
+		Role:       loomv1.FlowRole_FLOW_ROLE_RESPONDER,
+		Transport:  "udp",
+		PacketSize: 512,
+	}})
+	if err != nil {
+		t.Fatalf("Configure(RESPONDER) with nil Networks: %v", err)
+	}
+	if resp.GetDataPort() == 0 {
+		t.Error("responder reported data_port 0, want a bound ephemeral port")
+	}
+	if _, err := srv.Destroy(context.Background(), &loomv1.DestroyRequest{FlowId: resp.GetFlowId()}); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+}
