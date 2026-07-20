@@ -52,6 +52,22 @@ func (p *Params) GetInt(key string, def int) int {
 	return n
 }
 
+// GetBool returns the boolean value for key (strconv.ParseBool grammar:
+// "true"/"false"/"1"/"0"/…), or def when the key is absent or empty. A
+// malformed value records an error and returns def.
+func (p *Params) GetBool(key string, def bool) bool {
+	v, ok := p.m[key]
+	if !ok || v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		p.errs = append(p.errs, fmt.Errorf("param %q: %w", key, err))
+		return def
+	}
+	return b
+}
+
 // GetDuration returns the duration value for key (Go duration grammar, e.g.
 // "20ms", "1m30s"), or def when the key is absent or empty. A malformed value
 // records an error and returns def.

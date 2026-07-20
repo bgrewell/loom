@@ -64,6 +64,34 @@ func TestParamsGetInt(t *testing.T) {
 	}
 }
 
+func TestParamsGetBool(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		m       map[string]string
+		key     string
+		def     bool
+		want    bool
+		wantErr bool
+	}{
+		{"true", map[string]string{"tls": "true"}, "tls", false, true, false},
+		{"numeric", map[string]string{"tls": "1"}, "tls", false, true, false},
+		{"false overrides default", map[string]string{"tls": "false"}, "tls", true, false, false},
+		{"absent", map[string]string{}, "tls", true, true, false},
+		{"empty value", map[string]string{"tls": ""}, "tls", true, true, false},
+		{"malformed", map[string]string{"tls": "yes"}, "tls", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := app.NewParams(tc.m)
+			if got := p.GetBool(tc.key, tc.def); got != tc.want {
+				t.Errorf("GetBool(%q, %v) = %v, want %v", tc.key, tc.def, got, tc.want)
+			}
+			if gotErr := p.Err() != nil; gotErr != tc.wantErr {
+				t.Errorf("Err() = %v, wantErr %v", p.Err(), tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestParamsGetDuration(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

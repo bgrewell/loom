@@ -18,7 +18,15 @@ import (
 	// Register the built-in app engines (self-registration into the app
 	// registries, ADR-0022's Default() set): a stock loomd advertises them via
 	// Capabilities.apps and serves them under the APP_CLIENT/APP_SERVER roles.
+	_ "github.com/bgrewell/loom/core/app/httpx"
 	_ "github.com/bgrewell/loom/core/app/voip"
+
+	// Register the "netstack" netpath network so Capabilities.networks
+	// advertises it and FlowSpec.network="netstack" resolves. This is the
+	// import the loom_nonetstack build tag exists for: without the tag loomd
+	// carries gVisor; with it the same name resolves and fails with
+	// ErrDisabled instead of "unknown network" (design §2.12 skew gate).
+	_ "github.com/bgrewell/loom/core/netstack"
 )
 
 // Build metadata, injected at link time via -ldflags (see .goreleaser.yaml).
