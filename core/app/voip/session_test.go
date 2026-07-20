@@ -454,3 +454,107 @@ func TestConfigValidation(t *testing.T) {
 		t.Errorf("JitterBufferMs default = %d, want %d", s.cfg.JitterBufferMs, DefaultJitterBufferMs)
 	}
 }
+
+// stampNet wraps a Network so the answerer's socket implements metaReader:
+// each datagram's meta timestamp is taken at the moment the inner read
+// returns (the "wire arrival"), and only then is delivery to the caller
+// delayed — modeling a datapath that stamps frames on receipt while the
+// consumer dequeues late (e.g. a demux ring under load).
+type stampNet struct {
+	netpath.Network
+	after int
+	every int
+	delay time.Duration
+}
+
+func (s *stampNet) ListenPacket(network, address string) (net.PacketConn, error) {
+	pc, err := s.Network.ListenPacket(network, address)
+	if err != nil {
+		return nil, err
+	}
+	return &stampPC{PacketConn: pc, after: s.after, every: s.every, delay: s.delay}, nil
+}
+
+type stampPC struct {
+	net.PacketConn
+	mu    sync.Mutex
+	n     int
+	after int
+	every int
+	delay time.Duration
+}
+
+func (p *stampPC) ReadFromMeta(b []byte) (int, net.Addr, time.Time, error) {
+	n, a, err := p.PacketConn.ReadFrom(b)
+	stamp := time.Now()
+	if err != nil {
+		return n, a, time.Time{}, err
+	}
+	p.mu.Lock()
+	p.n++
+	k := p.n
+	p.mu.Unlock()
+	if k > p.after && k%p.every == 0 {
+		time.Sleep(p.delay)
+	}
+	return n, a, stamp, err
+}
+
+// ReadFrom shares ReadFromMeta's delaying path so a session that wrongly
+// ignores the meta seam still experiences the delays — and then fails the
+// low-jitter assertion, keeping that mutation observable.
+func (p *stampPC) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, a, _, err := p.ReadFromMeta(b)
+	return n, a, err
+}
+
+// TestArrivalMetaJitter pins the metaReader seam: with identical injected
+// dequeue delays, a socket that stamps wire arrivals keeps RFC 3550 A.8
+// jitter near the pacer's noise floor, while a plain socket (arrival taken at
+// dequeue) reports the delays as tens of milliseconds of spurious jitter.
+// Kills the mutation "rxLoop ignores ReadFromMeta and stamps time.Now()".
+func TestArrivalMetaJitter(t *testing.T) {
+	run := func(t *testing.T, wrap func(netpath.Network) netpath.Network) float64 {
+		t.Helper()
+		na, nb := netpath.Memory()
+		defer na.Close()
+		defer nb.Close()
+		ans, err := NewMediaSession(wrap(nb), MediaConfig{Codec: mustCodec(t, "pcmu")}, zeroOffset{})
+		if err != nil {
+			t.Fatalf("NewMediaSession(answerer): %v", err)
+		}
+		ans.setRTCPTmin(testRTCPTmin)
+		cal, err := NewMediaSession(na, MediaConfig{
+			Codec:     mustCodec(t, "pcmu"),
+			RemoteRTP: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), ans.LocalAddr().Port()),
+		}, zeroOffset{})
+		if err != nil {
+			t.Fatalf("NewMediaSession(caller): %v", err)
+		}
+		cal.setRTCPTmin(testRTCPTmin)
+		stopAns := startSession(ans)
+		stopCal := startSession(cal)
+		defer stopAns()
+		defer stopCal()
+		waitFor(t, 10*time.Second, "answerer to receive a jitter sample", func() bool {
+			return ans.Metrics().RxPackets >= 60
+		})
+		return ans.Metrics().JitterMs
+	}
+
+	// Delivery of every 2nd datagram (after latch warmup) is delayed 25 ms —
+	// under the 40 ms playout point, so this is pure jitter, no discards.
+	meta := run(t, func(n netpath.Network) netpath.Network {
+		return &stampNet{Network: n, after: 20, every: 2, delay: 25 * time.Millisecond}
+	})
+	plain := run(t, func(n netpath.Network) netpath.Network {
+		return &delayNet{Network: n, after: 20, every: 2, delay: 25 * time.Millisecond}
+	})
+
+	if meta >= 8 {
+		t.Errorf("JitterMs with meta stamps = %.2f, want < 8 (dequeue delay must not count as jitter)", meta)
+	}
+	if plain <= 10 {
+		t.Errorf("JitterMs without meta stamps = %.2f, want > 10 (control: delays visible at dequeue)", plain)
+	}
+}
