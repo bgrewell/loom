@@ -137,6 +137,26 @@ func TestByNameCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestByNameAliases pins the g711 alias family: every path that names a codec
+// (CLI flag, scenario param, embedder options) resolves the common spellings
+// to the RFC 3551 table rows, so `codec: g711` works in a scenario exactly as
+// it does on `loom rtp --codec g711`.
+func TestByNameAliases(t *testing.T) {
+	for alias, want := range map[string]string{
+		"g711": "pcmu", "G711": "pcmu", "g711u": "pcmu", "G711U": "pcmu",
+		"g711a": "pcma", "G711A": "pcma",
+	} {
+		c, err := ByName(alias)
+		if err != nil {
+			t.Errorf("ByName(%q): %v", alias, err)
+			continue
+		}
+		if c.Name != want {
+			t.Errorf("ByName(%q).Name = %q, want %q", alias, c.Name, want)
+		}
+	}
+}
+
 // TestByNameUnknown pins the unknown-codec error: it wraps ErrUnknown, names
 // the offender, and lists the registered rows.
 func TestByNameUnknown(t *testing.T) {

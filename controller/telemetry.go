@@ -27,7 +27,8 @@ type FlowSample struct {
 	Bytes      uint64
 	Packets    uint64
 	BitsPerSec float64
-	TCP        *TCPStats // sender-side TCP_INFO, nil for non-TCP / receiver flows
+	TCP        *TCPStats          // sender-side TCP_INFO, nil for non-TCP / receiver flows
+	App        *loomv1.AppMetrics // app-layer quality metrics (voip/http/video), nil for non-app flows
 }
 
 // TCPStats is a sender socket's TCP_INFO snapshot, surfaced for link profiling.
@@ -63,6 +64,11 @@ type Aggregate struct {
 	Complete     bool
 	Flows        []FlowSample
 	TCP          *TCPStats // sender TCP health for this interval (Retrans is the delta); nil for non-TCP
+	// App is the interval's representative app-quality snapshot (the app
+	// client's when it reported, else the server's — both ends of an app flow
+	// stream their own AppMetrics); nil for non-app events. Per-end snapshots
+	// are on Flows[i].App.
+	App *loomv1.AppMetrics
 }
 
 // Observer receives aggregate telemetry snapshots in real time. The CLI is one
@@ -97,8 +103,10 @@ type bucket struct {
 	reported         map[string]bool       // flow keys that reported this interval
 	flows            map[string]FlowSample // per-flow delta + rate (for --per-flow)
 	firstSeen        time.Time             // when this bucket got its first report
-	hasSource        bool                  // a source (sender/requester) reported it
+	hasSource        bool                  // a source (sender/requester/app client) reported it
 	tcp              *TCPStats             // sender TCP_INFO this interval (Retrans = delta)
+	app              *loomv1.AppMetrics    // representative app snapshot (client's preferred)
+	appFromClient    bool                  // app came from the AppClient (wins over the server's)
 }
 
 // Telemetry subscribes to placed flows' telemetry streams and consolidates their
@@ -258,7 +266,7 @@ func (t *Telemetry) subscribe(ctx context.Context, p Placed) {
 		// Cumulative, for the end-of-run summary.
 		t.latest[key] = FlowSample{
 			Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To, Datapath: p.Datapath,
-			Bytes: s.GetBytes(), Packets: s.GetPackets(), TCP: tcpStatsOf(s.GetTcp()),
+			Bytes: s.GetBytes(), Packets: s.GetPackets(), TCP: tcpStatsOf(s.GetTcp()), App: s.GetApp(),
 		}
 		// Fold a full interval's delta into its bucket. The final (trailing partial)
 		// sample carries index -1 and is accounted only in the cumulative totals.
@@ -299,7 +307,13 @@ func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
 		t.buckets[bk] = b
 		t.events[p.Event] = true
 	}
-	rx := p.Role == Receiver || p.Role == Requester
+	// Bucket classification: receiving/driving ends under rx, serving ends
+	// under tx. For app roles this is a per-end split, not a direction split —
+	// an app engine's Counters cover both directions of its media plane
+	// (client end → rx bucket, server end → tx bucket), so app tx/rx are
+	// comparable end totals but NOT a sender-vs-receiver loss basis; the
+	// observers suppress byte-loss inference for app flows accordingly.
+	rx := p.Role == Receiver || p.Role == Requester || p.Role == AppClient
 	if rx {
 		b.rxBytes += s.GetIntervalBytes()
 		b.rxPkts += s.GetIntervalPackets()
@@ -307,7 +321,7 @@ func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
 		b.txBytes += s.GetIntervalBytes()
 		b.txPkts += s.GetIntervalPackets()
 	}
-	if p.Role == Sender || p.Role == Requester {
+	if p.Role == Sender || p.Role == Requester || p.Role == AppClient {
 		b.hasSource = true // a driving flow reported this interval
 	}
 	if s.GetIntervalNanos() > b.nanos {
@@ -318,6 +332,17 @@ func (t *Telemetry) foldLocked(p Placed, s *loomv1.TelemetrySample) {
 		Event: p.Event, FlowID: p.FlowID, Role: p.Role, From: p.From, To: p.To,
 		Bytes: s.GetIntervalBytes(), Packets: s.GetIntervalPackets(),
 		BitsPerSec: bitsPerNanos(s.GetIntervalBytes(), s.GetIntervalNanos()),
+		App:        s.GetApp(),
+	}
+	// App quality for the live line: both ends of an app flow report their own
+	// snapshot; the aggregate carries the client's view (the initiating end),
+	// falling back to the server's until the client reports this interval.
+	if am := s.GetApp(); am != nil {
+		if p.Role == AppClient {
+			b.app, b.appFromClient = am, true
+		} else if !b.appFromClient {
+			b.app = am
+		}
 	}
 	// TCP health for the live line: snapshot the sender's TCP_INFO, with retrans as
 	// this interval's delta (new retransmits now) rather than the cumulative total.
@@ -448,6 +473,7 @@ func aggFromBucket(now time.Time, index int64, b *bucket, expected int, complete
 		Expected:     expected,
 		Complete:     complete,
 		TCP:          b.tcp,
+		App:          b.app,
 	}
 	for _, fs := range b.flows {
 		a.Flows = append(a.Flows, fs)
@@ -463,7 +489,7 @@ func bitsPerNanos(bytes uint64, nanos int64) float64 {
 	return float64(bytes) * 8 / (float64(nanos) / 1e9)
 }
 
-// WaitSources blocks until every source flow (Sender/Requester) currently placed
+// WaitSources blocks until every source flow (Sender/Requester/AppClient) currently placed
 // by src has finished streaming, or ctx is done. Returns true if all sources
 // completed, false on ctx cancellation. A scenario with no bounded source flows
 // (end-of-test) never completes on its own, so this waits for ctx.
@@ -475,7 +501,7 @@ func (t *Telemetry) WaitSources(ctx context.Context, src placedSource) bool {
 		sources, done := 0, 0
 		t.mu.Lock()
 		for _, p := range placed {
-			if p.Role == Sender || p.Role == Requester {
+			if p.Role == Sender || p.Role == Requester || p.Role == AppClient {
 				sources++
 				if t.ended[p.Key()] {
 					done++
@@ -494,14 +520,17 @@ func (t *Telemetry) WaitSources(ctx context.Context, src placedSource) bool {
 	}
 }
 
-// Snapshot returns the cumulative totals for the end-of-run summary.
+// Snapshot returns the cumulative totals for the end-of-run summary. App-role
+// flows land in the same rx/tx buckets as the live path (per-end totals, both
+// directions — see foldLocked); the summary renderer labels and treats them
+// accordingly.
 func (t *Telemetry) Snapshot() Aggregate {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	agg := Aggregate{At: time.Now(), Flows: make([]FlowSample, 0, len(t.latest))}
 	for _, fs := range t.latest {
 		agg.Flows = append(agg.Flows, fs)
-		if fs.Role == Receiver || fs.Role == Requester {
+		if fs.Role == Receiver || fs.Role == Requester || fs.Role == AppClient {
 			agg.RxBytes += fs.Bytes
 			agg.RxPackets += fs.Packets
 		} else {

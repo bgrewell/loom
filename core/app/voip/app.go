@@ -54,8 +54,15 @@ func (c *client) Run(ctx context.Context) error { return c.sess.Run(ctx) }
 // Counters implements app.Client.
 func (c *client) Counters() *accounting.Counters { return c.sess.Counters() }
 
-// Metrics implements metrics.Source.
+// Metrics implements metrics.Source. Each call closes one observation
+// interval (see MediaSession.Metrics).
 func (c *client) Metrics() metrics.Snapshot { return c.sess.Metrics() }
+
+// CumulativeMetrics returns the whole-call snapshot without closing an
+// observation interval — the final-sample/summary capability consumers
+// discover by assertion (interface{ CumulativeMetrics() metrics.Snapshot }),
+// the same optional pattern as io.Closer and metrics.Source.
+func (c *client) CumulativeMetrics() metrics.Snapshot { return c.sess.CumulativeMetrics() }
 
 // Close implements io.Closer: it releases the session's socket when the
 // instance was built but never run (idempotent; see MediaSession.Close).
