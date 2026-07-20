@@ -324,3 +324,115 @@ remain the default registration *sink*. (One known gap: the `stream` generator
 still resolves its payloader from the global `payload.Registry` internally, so a
 custom `Components.Payloads` affects capability reporting but not building until
 the generator takes a payload registry — a later cleanup if needed.)
+
+---
+
+### Real application traffic (design: [docs/design/real-app-traffic.md](docs/design/real-app-traffic.md))
+
+## ADR-0023 — One connection-factory seam: `netpath.Network`
+**Status:** Accepted · **Date:** 2026-07-17
+
+**Context.** Wire-true application engines (VoIP, HTTP/TLS, video) need
+`net.Conn`/`net.PacketConn` semantics over injectable stacks: the kernel,
+UDP-encoded-over-a-raw-L3-datapath, a userspace TCP/IP stack over a datapath, or
+an in-memory test loopback. Today `core/emul/reqresp` calls concrete
+`net.Dial`/`net.Listen`, so it cannot ride any injected datapath — and each new
+app could grow its own ad-hoc transport abstraction (`media.Transport`, emul
+`Dialer`/`Listener` funcs, …).
+**Decision.** Exactly one seam: `netpath.Network`
+(`DialContext`/`ListenPacket`/`Listen`/`Close`), a registry component
+(`Components.Networks`) with pure-data `Options` per ADR-0006/0022; embedders
+with live datapaths use direct constructors instead of the registry.
+Implementations: `host` (kernel, default), `dgram` (real IPv4+UDP headers over
+raw-L3 datapaths), `netstack` (gVisor, ADR-0026), `memory` (paired in-process
+nets for CI). `core/emul/reqresp` is refactored onto the seam with back-compat
+wrappers.
+**Consequences.** Every current and future app (including the planned SIP UA)
+dials/listens through one abstraction and therefore runs over any datapath —
+kernel, tunnel, or memory — unchanged. Retires the reqresp untunnelable defect.
+No parallel transport abstractions can accrete.
+
+## ADR-0024 — New APP_CLIENT/APP_SERVER flow roles, not a RESPONDER selector
+**Status:** Accepted · **Date:** 2026-07-17
+
+**Context.** App engines need agent-side placement. The existing
+RESPONDER/REQUESTER roles (request/response emulations) could be overloaded with
+a selector param naming the app ("responder, emulation=voip"), avoiding new enum
+values.
+**Decision.** Add `FLOW_ROLE_APP_CLIENT = 6` / `FLOW_ROLE_APP_SERVER = 7`
+(additive per ADR-0021) plus `FlowSpec.app/network/local` (fields 16–18),
+dispatching to the `AppClients`/`AppServers` registries.
+**Consequences.** Clean taxonomy and a natural telemetry home
+(`TelemetrySample.app = 12`). The rejected alternative is recorded here
+deliberately: overloading RESPONDER would (a) file wire-true protocol engines
+under `core/emul`, which is documented and implemented as *shape-only* carriage
+(mode.go), blurring loom's own taxonomy; (b) couple apps to reqresp's transport
+field and BehaviorScript plumbing even though apps are bidirectional with their
+own metrics plane; (c) risk the reflector's `Unimplemented` arm. Two additive
+enum values are the cheaper long-term cost. `core/emul` shapes stay shape-only
+by design.
+
+## ADR-0025 — Voice quality via full ITU-T G.107/G.107.1 E-model, not curve fits
+**Status:** Accepted · **Date:** 2026-07-17
+
+**Context.** `core/quality/emodel` turns delay/loss/burstiness into R-factor and
+MOS. Simplified approximations (e.g. the FiDO2011 curve fit) are common,
+plausible, and subtly wrong — the worst failure mode for a measurement tool,
+because nobody notices.
+**Decision.** Implement the full G.107 default formulas (narrowband) and G.107.1
+(wideband, its own 0..129 R scale and R→MOS map): computed Ro/Is (not
+constants), `Id = Idte + Idle + Idd` with the 100 ms Idd knee, `Ie,eff` with
+Gilbert `BurstR`, explicit `ComposeTa` (network OWD + jitter-buffer nominal +
+codec frame/lookahead delay) and Ppl-includes-discards semantics. No curve fits
+anywhere. Golden tests pin the G.107 Table 4 verification examples and
+zero-impairment R = 93.2 ± 0.01; every result carries a `Components`
+(Ro/Is/Idte/Idle/Idd/Ie,eff) audit breakdown; live runs are cross-checked
+against Wireshark RTP stream analysis. Opus impairment rows are provisional
+non-ITU values, flagged and overridable via `codec.Register`.
+**Consequences.** More math up front, but auditable, referenceable numbers — a
+disputed MOS can be decomposed term by term against the spec. The same
+discipline (spec-exact, golden-tested) applies to the RFC 3550 Appendix A
+receiver statistics feeding it.
+
+## ADR-0026 — gVisor isolated in `core/netstack` behind a build tag
+**Status:** Accepted · **Date:** 2026-07-17
+
+**Context.** TCP-based apps (HTTP/TLS, video) over a raw-L3 datapath need a
+userspace TCP/IP stack. gVisor's `pkg/tcpip` is the proven pure-Go option (no
+NET_ADMIN/TUN/netns), but it is a large module with internal API churn, and
+per-stack memory would hurt at fleet scale.
+**Decision.** Wrap gVisor in one package, `core/netstack`, pinned at a tested
+release; all gVisor imports stay inside it. A `loom_nonetstack` build tag stubs
+it for minimal agents (same isolation pattern as the heavy datapaths, ADR-0008).
+One multi-address `Stack` hosts many local addresses with per-connection
+source-bound `Network(local)` views — never one stack per address. The
+`stack.LinkEndpoint` is implemented directly over the ADR-0019 frame contract
+(`TxReserve`/`TxCommit`, `RxPoll`/`RxRelease`), avoiding a `channel.Endpoint`
+copy per packet. UDP apps ride the lightweight `dgram` network, so fleet voice
+never pays gVisor cost.
+**Consequences.** The heavy dependency is swappable/stubbable and its blast
+radius is one package. A netstack-vs-kernel benchmark delta and a sender-side
+timestamp audit are published before any TCP-derived measurement is claimed, so
+userspace-stack behavior is quantified rather than silently attributed to the
+network under test.
+
+## ADR-0027 — One-way delay is always labeled with method + error bound
+**Status:** Accepted · **Date:** 2026-07-17
+
+**Context.** OWD feeds the E-model's delay impairment (Id). Software clock sync
+has real error, and asymmetric paths (data through a tunnel, control over a
+management LAN) can bias offsets — an unlabeled OWD number is a lie waiting to
+happen.
+**Decision.** `core/owd` exposes `Estimate{Value, ErrBound, Method}` and an
+`OffsetProvider` seam. Three tiers, always labeled end-to-end (proto, CLI,
+Prometheus): **timesync** (TimeSync exchanges over a symmetric path, never the
+path under test; `owd.Tracker` min-delay-filters per window and drift-fits),
+**rtt/2** (ErrBound = RTT/2, never presented as measured), **assume-synced**
+(operator asserts NTP/PTP with a declared max error). When ErrBound exceeds a
+threshold, E-model input clamps to the labeled rtt/2 tier. Builds on the
+ADR-0010 TimeSync seam; hardware timestamps later fill `Frame.Meta` (ADR-0020)
+with no API change.
+**Consequences.** Every OWD-derived number (including MOS) carries honest
+uncertainty; downstream consumers can propagate the error bar instead of
+trusting a point estimate. Slightly wider telemetry rows (`owd_err_ms`,
+`owd_method`).
