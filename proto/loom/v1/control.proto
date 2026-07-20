@@ -273,7 +273,7 @@ message HttpMetrics {
 message VideoMetrics {
   uint64 stalls = 1;             // rebuffer events this interval
   double stall_time_ms = 2;      // total time stalled
-  double rebuffer_ratio = 3;     // stall_time / play_time
+  double rebuffer_ratio = 3;     // stall_time / (stall_time + play_time)
   double buffer_ms = 4;          // current buffer depth
   double avg_bitrate_kbps = 5;   // average selected bitrate
   double startup_ms = 6;         // time to first frame

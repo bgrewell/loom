@@ -68,13 +68,9 @@ func NewClient(o app.Options) (app.Client, error) {
 		objects  = p.GetInt("objects", 0)
 		sizeStr  = p.GetString("object_size", "100KB")
 		thinkStr = p.GetString("think", "")
-		useTLS   = p.GetBool("tls", false)
-		useH2    = p.GetBool("h2", false)
-		host     = p.GetString("host", "")
-		caB64    = p.GetString("tls_ca", "")
-		insecure = p.GetBool("tls_insecure", false)
 	)
-	errs := []error{p.Err()}
+	tr, scheme, host, terr := NewTransport(o.Network, p)
+	errs := []error{terr}
 	if urlPath != "" && !strings.HasPrefix(urlPath, "/") {
 		errs = append(errs, fmt.Errorf("param %q: must begin with '/', got %q", "url_path", urlPath))
 	}
@@ -100,51 +96,11 @@ func NewClient(o app.Options) (app.Client, error) {
 			errs = append(errs, fmt.Errorf("param %q: must not be negative, got %q", "think", thinkStr))
 		}
 	}
-	if useH2 && !useTLS {
-		errs = append(errs, errors.New(`param "h2": requires tls=true (h2c is not supported)`))
-	}
-	if !useTLS && (caB64 != "" || insecure) {
-		errs = append(errs, errors.New(`params "tls_ca"/"tls_insecure": only meaningful with tls=true`))
-	}
-	var tcfg *tls.Config
-	if useTLS {
-		tcfg = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host}
-		if caB64 != "" {
-			pool, cerr := rootsFromParam(caB64)
-			if cerr != nil {
-				errs = append(errs, cerr)
-			}
-			tcfg.RootCAs = pool
-		}
-		if insecure {
-			// Lab shortcut ONLY, explicitly opted into via tls_insecure:
-			// verification is otherwise always on (pin via tls_ca).
-			tcfg.InsecureSkipVerify = true
-		}
-	}
+	errs = append(errs, p.Err())
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("httpx: %w", err)
 	}
 
-	// The Transport rides the injected Network. traceDial forwards the
-	// standard httptrace ConnectStart/ConnectDone hooks around the injected
-	// dial: net.Dialer fires them itself, but a netpath.Network (memory
-	// fabric, datapath-backed stack) has no obligation to, and the connect
-	// timing must not silently vanish on non-kernel networks.
-	scheme := "http"
-	if useTLS {
-		scheme = "https"
-	}
-	tr := &http.Transport{
-		DialContext:           traceDial(o.Network.DialContext),
-		TLSClientConfig:       tcfg,
-		ForceAttemptHTTP2:     useH2, // explicit: custom DialContext+TLSClientConfig otherwise disable h2
-		DisableCompression:    true,  // synthetic bodies are incompressible; keep sizes exact
-		MaxIdleConns:          8,
-		IdleConnTimeout:       60 * time.Second,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ExpectContinueTimeout: time.Second,
-	}
 	seed := o.Seed
 	if seed == 0 {
 		seed = time.Now().UnixNano() // unseeded runs must not all draw one sequence

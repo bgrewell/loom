@@ -162,9 +162,10 @@ type Video struct {
 	SegmentsFetched uint64 `json:"segments_fetched"`
 	Stalls          uint64 `json:"stalls"`
 	// StartupMs is time from session start to first play; StallTimeMs the
-	// total time spent stalled; RebufferRatio stall time over play time;
-	// BufferMs the current buffer level; AvgBitrateKbps the mean bitrate
-	// of fetched segments.
+	// total time spent stalled; RebufferRatio stall time over stall+play
+	// time (bounded [0,1]: an all-stall interval reads 1, not 0); BufferMs
+	// the current buffer level; AvgBitrateKbps the mean bitrate of fetched
+	// segments.
 	StartupMs      float64 `json:"startup_ms"`
 	StallTimeMs    float64 `json:"stall_time_ms"`
 	RebufferRatio  float64 `json:"rebuffer_ratio"`

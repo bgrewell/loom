@@ -44,9 +44,11 @@ const (
 	bodyChunk = 32 * 1024
 )
 
-// rung is one ladder rendition. Kbps doubles as the path segment
-// (/media/{name}/{kbps}/…), so it is the rendition's identity.
-type rung struct {
+// Rung is one ladder rendition. Kbps doubles as the path segment
+// (/media/{name}/{kbps}/…), so it is the rendition's identity. Exported for
+// core/app/vidstream, whose optional ladder-expectation parameter shares the
+// origin's grammar.
+type Rung struct {
 	Label string
 	Kbps  int
 }
@@ -62,7 +64,7 @@ type origin struct {
 	certPEM []byte
 
 	seed     int64
-	ladder   []rung
+	ladder   []Rung
 	segDur   time.Duration
 	segments int
 
@@ -101,7 +103,7 @@ func NewServer(o app.Options) (app.Server, error) {
 	if segments <= 0 {
 		errs = append(errs, fmt.Errorf("param %q: must be positive, got %d", "segments", segments))
 	}
-	ladder, lerr := parseLadder(ladderStr)
+	ladder, lerr := ParseLadder(ladderStr)
 	if lerr != nil {
 		errs = append(errs, fmt.Errorf("param %q: %w", "ladder", lerr))
 	}
@@ -186,11 +188,12 @@ func listenRange(n netpath.Network, portMin, portMax int) (net.Listener, error) 
 	return nil, fmt.Errorf("httpx: no free port in %d..%d: %w", portMin, portMax, lastErr)
 }
 
-// parseLadder parses "label:rate" pairs ("240p:400k,480p:1200k"). Rates use
+// ParseLadder parses "label:rate" pairs ("240p:400k,480p:1200k"). Rates use
 // loom's rate grammar and must round to at least 1 kbps, because the kbps
-// value is the rendition's path segment.
-func parseLadder(s string) ([]rung, error) {
-	var ladder []rung
+// value is the rendition's path segment. The grammar is shared with the
+// "video" app's ladder-expectation parameter (core/app/vidstream).
+func ParseLadder(s string) ([]Rung, error) {
+	var ladder []Rung
 	seen := map[int]bool{}
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
@@ -213,7 +216,7 @@ func parseLadder(s string) ([]rung, error) {
 			return nil, fmt.Errorf("rung %q: duplicate %d kbps rendition", part, kbps)
 		}
 		seen[kbps] = true
-		ladder = append(ladder, rung{Label: strings.TrimSpace(label), Kbps: kbps})
+		ladder = append(ladder, Rung{Label: strings.TrimSpace(label), Kbps: kbps})
 	}
 	if len(ladder) == 0 {
 		return nil, errors.New("empty ladder")

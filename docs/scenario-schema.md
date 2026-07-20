@@ -114,7 +114,8 @@ coexist. There is no implicit serialization to opt out of.
 
 ## Flow
 
-`flow.kind` selects a raw protocol or an emulation; remaining keys are its params.
+`flow.kind` selects a raw protocol, an emulation, or an application engine;
+remaining keys are its params.
 
 ### Raw protocols
 ```yaml
@@ -132,6 +133,21 @@ flow: { kind: ssh-session,      interkey: 80ms..300ms, bulk: 0..2MB }
 flow: { kind: prometheus-sender, scrape: 15s, series: 5000 }
 flow: { kind: ftp-transfer }                                     # bound by stop.volume
 ```
+
+### Application engines (see [Application engines](apps.md))
+Real protocol engines, not shapes: the kind is the app name, and the
+controller places a client/server pair (`video` is client-only — its far end
+is placed as the `http` origin).
+```yaml
+flow: { kind: voip,  codec: g711, duration: 60s }                # RTP/RTCP + live MOS
+flow: { kind: http,  object_size: 100KB..1MB, think: 500ms, duration: 2m }
+flow: { kind: video, ladder: "240p:400k,720p:2500k", duration: 3m }
+```
+App kinds accept **only a duration bound** (`stop.after` or a `duration` flow
+param); `stop.count`/`stop.volume` are refused up front rather than silently
+dropped. Both agents must advertise the engines (the version-skew gate refuses
+an old `loomd` with an actionable error). Note `voip` (the engine) is distinct
+from the `voip-call` emulation above, which only reproduces the traffic shape.
 
 ## Report (optional)
 ```yaml

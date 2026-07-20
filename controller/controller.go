@@ -254,9 +254,10 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return err
 	}
 
-	// Application kinds (voip, and http/video once those engines land) place a
-	// real protocol engine pair: an app server on the destination agent and an
-	// app client on the source agent (core/app, FLOW_ROLE_APP_*).
+	// Application kinds (voip, http, video) place a real protocol engine
+	// pair: an app server on the destination agent and an app client on the
+	// source agent (core/app, FLOW_ROLE_APP_*). The video kind's far end is
+	// the "http" origin — its player is client-only (serverAppFor).
 	if isAppKind(ev.Flow.Kind) {
 		return c.fireApp(ctx, ev, from, to, fromAgent, fromAddr, toAgent, toAddr)
 	}
@@ -377,15 +378,29 @@ const appServerGrace = 2 * time.Second
 
 // isAppKind reports whether a scenario flow kind names an application protocol
 // engine (core/app). The kind strings are the metrics snapshot kinds — the
-// same identifiers that travel as FlowSpec.app; http/video are accepted now
-// and light up as those engines land on the agents (until then the skew gate
-// refuses them cleanly).
+// same identifiers that travel as FlowSpec.app on the client side; the server
+// side's engine is serverAppFor(kind). An agent lacking an engine is refused
+// cleanly by the skew gate.
 func isAppKind(kind string) bool {
 	switch kind {
 	case metrics.KindVoIP, metrics.KindHTTP, metrics.KindVideo:
 		return true
 	}
 	return false
+}
+
+// serverAppFor maps a scenario app kind to the engine placed at its far end.
+// Every kind's server is itself except video: the ABR player is client-only
+// by design (core/app/vidstream registers no server), so its far end is the
+// "http" app's HTTPOrigin serving the generated ladder. Params travel
+// verbatim to both ends, so `ladder`/`seg_duration`/`segments` configure the
+// origin while the player treats `ladder` as its expectation — one grammar,
+// both sides (each engine reads only the keys it documents).
+func serverAppFor(kind string) string {
+	if kind == metrics.KindVideo {
+		return metrics.KindHTTP
+	}
+	return kind
 }
 
 // fireApp places an application flow: the app server on the destination agent
@@ -405,6 +420,7 @@ func isAppKind(kind string) bool {
 // (a fixed pre-gate grace would be eaten by the gate slack on slow links).
 func (c *Controller) fireApp(ctx context.Context, ev scenario.Event, from, to scenario.Endpoint, fromAgent loomv1.ControlClient, fromAddr string, toAgent loomv1.ControlClient, toAddr string) error {
 	appName := ev.Flow.Kind
+	serverApp := serverAppFor(appName)
 	network := appNetwork(ev)
 	// The far end must be duration-bounded (orphan protection: a server whose
 	// controller crashed after Start must not hold its port forever), and the
@@ -419,7 +435,7 @@ func (c *Controller) fireApp(ctx context.Context, ev scenario.Event, from, to sc
 	if ev.Stop.Count > 0 || ev.Stop.Volume > 0 {
 		return fmt.Errorf("event %q: app flow %q supports only a duration bound (stop.after); stop.count/stop.volume are not supported for app kinds", ev.Name, appName)
 	}
-	if err := c.gateApp(ctx, toAgent, toAddr, appName, network, AppServer); err != nil {
+	if err := c.gateApp(ctx, toAgent, toAddr, serverApp, network, AppServer); err != nil {
 		return fmt.Errorf("event %q: %w", ev.Name, err)
 	}
 	if err := c.gateApp(ctx, fromAgent, fromAddr, appName, network, AppClient); err != nil {
@@ -444,7 +460,7 @@ func (c *Controller) fireApp(ctx context.Context, ev scenario.Event, from, to sc
 	if err != nil {
 		return fmt.Errorf("event %q: configure app server: %w", ev.Name, err)
 	}
-	c.track(toAgent, toAddr, srvCfg.GetFlowId(), AppServer, ev.Name, from.Name, to.Name, appName)
+	c.track(toAgent, toAddr, srvCfg.GetFlowId(), AppServer, ev.Name, from.Name, to.Name, serverApp)
 	if _, err := toAgent.Start(ctx, c.startReq(srvCfg.GetFlowId(), to.Name, gate)); err != nil {
 		return fmt.Errorf("event %q: start app server: %w", ev.Name, err)
 	}
@@ -576,15 +592,16 @@ func (c *Controller) appServerBound(ev scenario.Event) time.Duration {
 	return appDuration(ev) + appServerGrace + 2*c.maxSyncDelay()
 }
 
-// appServerSpec builds the app server's FlowSpec: the far end of the app named
-// by the flow kind. Params travel verbatim (codec, jb_ms, port_min/port_max,
+// appServerSpec builds the app server's FlowSpec: the far end of the app
+// named by the flow kind — serverAppFor maps it (video's far end is the
+// "http" origin). Params travel verbatim (codec, jb_ms, port_min/port_max,
 // …). The server is duration-bounded whenever the client is — orphan
 // protection per the responder-role design — with bound (appServerBound) as
 // the enforced run limit so it outlives the client's call and trailing RTCP.
 func appServerSpec(ev scenario.Event, network string, seed int64, bound time.Duration) *loomv1.FlowSpec {
 	spec := &loomv1.FlowSpec{
 		Role:    loomv1.FlowRole_FLOW_ROLE_APP_SERVER,
-		App:     ev.Flow.Kind,
+		App:     serverAppFor(ev.Flow.Kind),
 		Network: network,
 		Params:  stringParams(ev.Flow.Params),
 		Seed:    seed,

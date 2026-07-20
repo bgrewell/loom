@@ -43,6 +43,11 @@ nav:
       - Application emulations: guides/emulations.md
       - Choosing a datapath: guides/datapaths.md
       - Securing the control plane: guides/securing-the-control-plane.md
+  - Application traffic:
+      - The netpath seam: netpath.md
+      - Application engines: apps.md
+      - Voice quality scoring: quality.md
+      - Clocks & one-way delay: clock-sync.md
   - Architecture: architecture.md
   - Deployment: deployment.md
   - Reference:
@@ -56,6 +61,7 @@ nav:
       - CI / CD: ci-cd.md
       - Design notes: blueprints/README.md
       - "Design: real application traffic": design/real-app-traffic.md
+      - "Design: SIP app": design/sip-app.md
 
 validation:
   nav:

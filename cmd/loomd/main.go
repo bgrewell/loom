@@ -19,6 +19,7 @@ import (
 	// registries, ADR-0022's Default() set): a stock loomd advertises them via
 	// Capabilities.apps and serves them under the APP_CLIENT/APP_SERVER roles.
 	_ "github.com/bgrewell/loom/core/app/httpx"
+	_ "github.com/bgrewell/loom/core/app/vidstream"
 	_ "github.com/bgrewell/loom/core/app/voip"
 
 	// Register the "netstack" netpath network so Capabilities.networks
