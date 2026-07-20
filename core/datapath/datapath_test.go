@@ -140,7 +140,7 @@ func TestUDPListenerReceives(t *testing.T) {
 		t.Fatalf("RxPoll: %v", err)
 	}
 	if len(frames) != 1 || string(frames[0].Data[:frames[0].Len]) != "data" {
-		t.Fatalf("RxPoll returned %d frames: %q", len(frames), frames)
+		t.Fatalf("RxPoll returned %d frames: %v", len(frames), frames)
 	}
 	if frames[0].Meta.Nanos == 0 {
 		t.Error("frame missing receive timestamp")

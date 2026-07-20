@@ -56,7 +56,10 @@ func populatedHTTP() metrics.HTTP {
 		TLSHandshakeMs: 24.5,
 		TTFBMsP50:      31.25,
 		TTFBMsP95:      88.5,
+		TTFBMsP99:      120.25,
+		ObjectMsP50:    150.5,
 		ObjectMsP95:    210.5,
+		ObjectMsP99:    340.75,
 		GoodputMbps:    42.5,
 	}
 }
@@ -170,7 +173,8 @@ func TestGoldenJSON(t *testing.T) {
 			in:   populatedHTTP(),
 			want: `{"requests":1200,"errors":3,"connect_ms":8.5,` +
 				`"tls_handshake_ms":24.5,"ttfb_ms_p50":31.25,"ttfb_ms_p95":88.5,` +
-				`"object_ms_p95":210.5,"goodput_mbps":42.5}`,
+				`"ttfb_ms_p99":120.25,"object_ms_p50":150.5,"object_ms_p95":210.5,` +
+				`"object_ms_p99":340.75,"goodput_mbps":42.5}`,
 		},
 		{
 			name: "video",
@@ -199,7 +203,8 @@ func TestGoldenJSON(t *testing.T) {
 			name: "http-zero",
 			in:   metrics.HTTP{},
 			want: `{"requests":0,"errors":0,"connect_ms":0,"tls_handshake_ms":0,` +
-				`"ttfb_ms_p50":0,"ttfb_ms_p95":0,"object_ms_p95":0,"goodput_mbps":0}`,
+				`"ttfb_ms_p50":0,"ttfb_ms_p95":0,"ttfb_ms_p99":0,"object_ms_p50":0,` +
+				`"object_ms_p95":0,"object_ms_p99":0,"goodput_mbps":0}`,
 		},
 		{
 			name: "video-zero",

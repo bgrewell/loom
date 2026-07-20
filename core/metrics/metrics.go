@@ -134,13 +134,18 @@ type HTTP struct {
 	Requests uint64 `json:"requests"`
 	Errors   uint64 `json:"errors"`
 	// ConnectMs and TLSHandshakeMs are mean TCP-connect and TLS-handshake
-	// times; TTFBMsP50/TTFBMsP95 are time-to-first-byte percentiles and
-	// ObjectMsP95 the p95 full-transfer time, all in milliseconds.
+	// times of the window's newly established connections (reused keep-alive
+	// connections contribute no samples); TTFBMsP50/P95/P99 are
+	// time-to-first-byte percentiles and ObjectMsP50/P95/P99 the full-transfer
+	// (request start to last body byte) percentiles, all in milliseconds.
 	ConnectMs      float64 `json:"connect_ms"`
 	TLSHandshakeMs float64 `json:"tls_handshake_ms"`
 	TTFBMsP50      float64 `json:"ttfb_ms_p50"`
 	TTFBMsP95      float64 `json:"ttfb_ms_p95"`
+	TTFBMsP99      float64 `json:"ttfb_ms_p99"`
+	ObjectMsP50    float64 `json:"object_ms_p50"`
 	ObjectMsP95    float64 `json:"object_ms_p95"`
+	ObjectMsP99    float64 `json:"object_ms_p99"`
 	// GoodputMbps is application-payload throughput in megabits per second.
 	GoodputMbps float64 `json:"goodput_mbps"`
 }
