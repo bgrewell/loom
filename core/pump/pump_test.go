@@ -78,13 +78,28 @@ func TestPumpBatchesUnderSoak(t *testing.T) {
 	}
 }
 
+// oneSched releases exactly one packet per Pace call, standing in for a rate
+// scheduler at its cadence. (scheduler.NewInterval(0) clamps to a 1ns gap and
+// may legitimately release several due slots in one call when consecutive
+// Pace calls land within one clock tick, which made this test flaky.)
+type oneSched struct{}
+
+func (oneSched) Name() string { return "one" }
+func (oneSched) Pace(ctx context.Context, _ int) (int, bool) {
+	select {
+	case <-ctx.Done():
+		return 0, false
+	default:
+		return 1, true
+	}
+}
+
 // TestPumpPacedSendsOneAtATime: a rate scheduler keeps batches at 1 (strict
 // pacing is not defeated by batching).
 func TestPumpPacedSendsOneAtATime(t *testing.T) {
 	rec := newRecordingTx(64, 64)
 	var acct accounting.Counters
-	sched := scheduler.NewInterval(0) // 0 gap: fires immediately but one at a time
-	p := New(&nGen{left: 20}, sched, rec, &acct)
+	p := New(&nGen{left: 20}, oneSched{}, rec, &acct)
 	if err := p.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

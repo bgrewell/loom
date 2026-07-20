@@ -73,7 +73,8 @@ func NewAFXDPTx(ifname string, queue int) (*AFXDPTx, error) {
 // Name implements TxDatapath.
 func (*AFXDPTx) Name() string { return "afxdp" }
 
-// Caps implements TxDatapath.
+// Caps implements TxDatapath. AF_XDP frames are full Ethernet frames, so
+// RawL2 — not RawL3, which means bare IP packets.
 func (*AFXDPTx) Caps() Capabilities { return Capabilities{RawL2: true} }
 
 // TxReserve hands out free UMEM frames (aliases, no copy) to fill.
@@ -164,7 +165,8 @@ func NewAFXDPRx(ifname string, queue int) (rx *AFXDPRx, err error) {
 // Name implements RxDatapath.
 func (*AFXDPRx) Name() string { return "afxdp" }
 
-// Caps implements RxDatapath.
+// Caps implements RxDatapath. AF_XDP frames are full Ethernet frames, so
+// RawL2 — not RawL3, which means bare IP packets.
 func (*AFXDPRx) Caps() Capabilities { return Capabilities{RawL2: true} }
 
 // RxPoll returns received frames (aliases of the UMEM), refilling the fill ring

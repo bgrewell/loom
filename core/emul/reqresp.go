@@ -10,16 +10,22 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/bgrewell/loom/core/accounting"
+	"github.com/bgrewell/loom/core/netpath"
 )
 
 // Request/response emulations (e.g. https-browse, ftp-transfer) need real
 // bidirectional traffic: a client requests an object and a server returns it, so
 // the *download* bytes flow server→client. That is connection-oriented and two-
 // way — unlike the one-directional frame datapath — so the requester and
-// responder here speak directly over net (TCP or UDP).
+// responder here dial and listen through an injected netpath.Network (TCP or
+// UDP). The default is the kernel stack (netpath.Host), but any Network works:
+// the same session runs over the in-memory fabric in tests, or a
+// datapath-backed network in an embedder — no concrete net.Dial/net.Listen.
 //
 // Wire protocol: a request is an 8-byte big-endian response size; the response
 // is that many bytes. One generic responder serves any request/response
@@ -46,14 +52,26 @@ type Requester struct {
 }
 
 // DialRequester connects to a responder at target over transport ("tcp"|"udp")
-// and prepares a request/response runner.
+// on the kernel stack and prepares a request/response runner.
+//
+// Deprecated: use NewRequester with an injected netpath.Network. DialRequester
+// is a back-compat wrapper pinned to netpath.Host, so its sessions cannot ride
+// a datapath-backed or in-memory network.
 func DialRequester(transport, target string, script BehaviorScript, mtu int, after time.Duration, count, volume uint64, seed int64) (*Requester, error) {
+	return NewRequester(context.Background(), netpath.Host(netip.Addr{}), transport, target, script, mtu, after, count, volume, seed)
+}
+
+// NewRequester connects to a responder at target over transport ("tcp"|"udp")
+// through n and prepares a request/response runner. ctx bounds the dial only.
+// The caller retains ownership of n; the Requester owns just the connection it
+// dialed (released by Close/Run).
+func NewRequester(ctx context.Context, n netpath.Network, transport, target string, script BehaviorScript, mtu int, after time.Duration, count, volume uint64, seed int64) (*Requester, error) {
 	switch transport {
 	case "tcp", "udp":
 	default:
 		return nil, fmt.Errorf("request/response transport must be tcp or udp, got %q", transport)
 	}
-	c, err := net.Dial(transport, target)
+	c, err := n.DialContext(ctx, transport, target)
 	if err != nil {
 		return nil, err
 	}
@@ -162,8 +180,20 @@ type Responder struct {
 	acct      accounting.Counters
 }
 
-// ListenResponder binds an ephemeral port for transport ("tcp"|"udp").
+// ListenResponder binds an ephemeral port for transport ("tcp"|"udp") on the
+// kernel stack.
+//
+// Deprecated: use NewResponder with an injected netpath.Network. ListenResponder
+// is a back-compat wrapper pinned to netpath.Host, so its sessions cannot ride
+// a datapath-backed or in-memory network.
 func ListenResponder(transport string, mtu int) (*Responder, error) {
+	return NewResponder(netpath.Host(netip.Addr{}), transport, mtu)
+}
+
+// NewResponder binds an ephemeral port for transport ("tcp"|"udp") on n. The
+// caller retains ownership of n; the Responder owns just the listener/socket it
+// bound (released by Close/Run).
+func NewResponder(n netpath.Network, transport string, mtu int) (*Responder, error) {
 	if mtu < 1 {
 		mtu = 32 * 1024
 	}
@@ -172,21 +202,39 @@ func ListenResponder(transport string, mtu int) (*Responder, error) {
 	case "tcp":
 		// ":0" binds all interfaces on an ephemeral port (read back via Port()),
 		// matching the UDP receiver datapath so a responder is reachable cross-host.
-		ln, err := net.Listen("tcp", ":0")
+		ln, err := n.Listen("tcp", ":0")
 		if err != nil {
 			return nil, err
 		}
-		r.ln, r.port = ln, ln.Addr().(*net.TCPAddr).Port
+		r.ln, r.port = ln, addrPort(ln.Addr())
 	case "udp":
-		pc, err := net.ListenPacket("udp", ":0")
+		pc, err := n.ListenPacket("udp", ":0")
 		if err != nil {
 			return nil, err
 		}
-		r.pc, r.port = pc, pc.LocalAddr().(*net.UDPAddr).Port
+		r.pc, r.port = pc, addrPort(pc.LocalAddr())
 	default:
 		return nil, fmt.Errorf("responder transport must be tcp or udp, got %q", transport)
 	}
 	return r, nil
+}
+
+// addrPort extracts the port from a bound address without assuming the
+// concrete net.Addr type, so any netpath.Network's addresses work (kernel
+// *net.TCPAddr/*net.UDPAddr, the memory fabric's "mem:<port>", …).
+func addrPort(a net.Addr) int {
+	switch t := a.(type) {
+	case *net.TCPAddr:
+		return t.Port
+	case *net.UDPAddr:
+		return t.Port
+	}
+	if _, ps, err := net.SplitHostPort(a.String()); err == nil {
+		if p, err := strconv.Atoi(ps); err == nil {
+			return p
+		}
+	}
+	return 0
 }
 
 // Port returns the bound listen port (for ephemeral-port negotiation).
