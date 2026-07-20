@@ -437,16 +437,39 @@ func (m *MediaSession) txLoop(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+// metaReader is the optional net.PacketConn extension (structurally matching
+// netpath/dgram.MetaConn and the memory fabric) whose ReadFromMeta returns the
+// datagram's receive timestamp stamped by the underlying datapath. When the
+// mux socket provides it, jitter and one-way-delay measurement anchor at the
+// wire arrival instead of this goroutine's dequeue time, so in-process
+// queueing (rings, channel handoffs, scheduling) does not masquerade as
+// network jitter. A zero timestamp falls back to time.Now().
+type metaReader interface {
+	ReadFromMeta(p []byte) (int, net.Addr, time.Time, error)
+}
+
 // rxLoop reads the mux socket until cancellation or socket failure,
 // classifying each datagram per RFC 5761 and dispatching to the RTP latch/
-// stats path or the RTCP processor. A read error while ctx is live is fatal:
-// it is recorded and cancels the session (deterministic termination on
-// socket close).
+// stats path or the RTCP processor. Arrival times prefer the datapath's
+// receive timestamp when the socket implements metaReader. A read error while
+// ctx is live is fatal: it is recorded and cancels the session (deterministic
+// termination on socket close).
 func (m *MediaSession) rxLoop(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup) {
 	defer wg.Done()
 	buf := make([]byte, rxBufSize)
+	mr, _ := m.pc.(metaReader)
 	for {
-		n, from, err := m.pc.ReadFrom(buf)
+		var (
+			n     int
+			from  net.Addr
+			stamp time.Time
+			err   error
+		)
+		if mr != nil {
+			n, from, stamp, err = mr.ReadFromMeta(buf)
+		} else {
+			n, from, err = m.pc.ReadFrom(buf)
+		}
 		if err != nil {
 			var ne net.Error
 			if errors.As(err, &ne) && ne.Timeout() {
@@ -466,7 +489,10 @@ func (m *MediaSession) rxLoop(ctx context.Context, cancel context.CancelFunc, wg
 			}
 			return
 		}
-		arrival := time.Now()
+		arrival := stamp
+		if arrival.IsZero() {
+			arrival = time.Now()
+		}
 		m.acct.Add(uint64(n))
 		pkt := buf[:n]
 		if rtcp.IsRTCP(pkt) {
