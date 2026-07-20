@@ -375,6 +375,22 @@ they share machinery rather than each being bespoke.
 New emulations are added by describing a behavior script, not by writing a new
 transport.
 
+### Protocol tiers: shape-only emulation vs wire-true apps
+
+Emulation is one of **two tiers** of application traffic, and the split is
+deliberate:
+
+| Tier | Lives in | On the wire | Measures |
+|---|---|---|---|
+| **Emulations** (`https-browse`, `voip-call`, …) | `core/emul` behavior scripts | the traffic *shape* — sizes, directions, think-times over a raw transport | throughput/latency via the standard accounting |
+| **Apps** (`voip`, `http`, `video`) | `core/app` protocol engines over the `netpath.Network` seam | the *actual protocol* — RTP/RTCP that Wireshark decodes, real HTTP/1.1 + TLS handshakes | protocol-level quality: G.107 MOS, TTFB/goodput, streaming QoE (`core/metrics`) |
+
+`core/emul` shapes stay **shape-only by design** (ADR-0024): when a test needs
+real protocol bytes and protocol-level quality scoring, that's an app, placed
+via the `FLOW_ROLE_APP_CLIENT`/`FLOW_ROLE_APP_SERVER` roles — not a
+higher-fidelity mode bolted onto an emulation. Full design:
+[docs/design/real-app-traffic.md](docs/design/real-app-traffic.md).
+
 ## 11. Roles & topology
 
 One core library, wearing four hats. Only the **agent** ever touches the wire;

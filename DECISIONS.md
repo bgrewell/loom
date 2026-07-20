@@ -416,6 +416,21 @@ timestamp audit are published before any TCP-derived measurement is claimed, so
 userspace-stack behavior is quantified rather than silently attributed to the
 network under test.
 
+**Addendum (2026-07-20) — pin and measurement-hygiene gate, as landed.** The
+pin is `v0.0.0-20260717235516-4f55f3833ba5`, the tip of gVisor's
+module-consumption "go" branch just after release-20260714.0 (the release sync
+itself is not importable as a Go module: its `pkg/tcpip/stack` ships a
+`bridge_test.go` whose package clause the Go loader rejects). The §9
+measurement-hygiene gate ran and its numbers are published in
+`core/netstack/doc.go` with the harness (`bench_test.go`) to reproduce them:
+on the reference machine, netstack-over-memory-datapath TCP throughput
+~400 MB/s vs kernel-loopback ~6530 MB/s and 128 B ping-pong RTT ~31 µs vs
+~6.5 µs (deltas bundle the framing difference — treat them as the
+userspace-stack budget, not a precise stack-only cost), and the send-side
+Write→TxCommit contribution is p50 ≈ 22 µs / p95 ≈ 46 µs / p99 ≈ 60 µs — the
+noise floor to quote next to any TCP-derived timing, reported separately and
+never attributed to the network under test.
+
 ## ADR-0027 — One-way delay is always labeled with method + error bound
 **Status:** Accepted · **Date:** 2026-07-17
 
@@ -436,3 +451,49 @@ with no API change.
 uncertainty; downstream consumers can propagate the error bar instead of
 trusting a point estimate. Slightly wider telemetry rows (`owd_err_ms`,
 `owd_method`).
+
+## ADR-0028 — httpx TLS: verification stays on; pin the origin's cert, don't disable
+**Status:** Accepted · **Date:** 2026-07-20
+
+**Context.** The `http` app's origin serves TLS with a self-signed certificate
+generated at build time. The lazy convention in traffic tools is
+`InsecureSkipVerify` everywhere — which silently normalizes unverified TLS,
+measures a handshake that skips real verification work, and teaches operators
+to paste the flag into places that matter.
+**Decision.** Certificate verification stays ON by default. The origin exposes
+its generated certificate through a `CertificatePEM()` accessor (an optional
+capability discovered by assertion, like `io.Closer`); consumers carry it to
+the client as the `tls_ca` param — base64-encoded PEM, chosen over raw PEM or
+a file path so the value travels safely inside the wire params map with no
+shared filesystem — and the client pins it as its root pool. The generated
+certificate carries the SANs clients will actually dial (a `host` param plus,
+when binding the unspecified address, the host's interface IPs). `tls_insecure`
+exists as an explicit, documented lab-only opt-in — never the default path.
+**Consequences.** TLS timings measure a real verifying handshake end to end,
+cross-machine HTTPS works out of the box with verification on, and the insecure
+path is a deliberate, greppable choice. Cost: one extra param to plumb when a
+controller places TLS flows.
+
+## ADR-0029 — vidstream is a player model, not a media decoder
+**Status:** Accepted · **Date:** 2026-07-20
+
+**Context.** The `video` app (core/app/vidstream, Phase 7) needs streaming-QoE
+numbers: startup time, stalls, rebuffer ratio, buffer level, bitrate-ladder
+behavior. Embedding a real decoder (or a headless player) would add a huge
+dependency, burn CPU that perturbs the measurement at fleet scale, and add no
+information — QoE at this layer is a function of segment *arrival timing*, not
+pixel content.
+**Decision.** vidstream models the player: it fetches the manifest and
+segments from the httpx origin's generated HLS/DASH ladder over the injected
+netpath, while a virtual playhead drains a buffer in real time — stall when
+the buffer empties while playing, resume at the rebuffer target, an ABR policy
+switching rungs on throughput/buffer signals. Segment bytes are counted and
+discarded, never decoded; there is no frame clock, no codec, no rendering. QoE
+comes out as `metrics.Video` (startup, stalls + timed stall events, rebuffer
+ratio, buffer level, average bitrate, ladder switches). Same philosophy as the
+media plane's "wire-format-true, content-synthetic" payloads (core/rtp): real
+protocol behavior on the wire, synthetic content inside.
+**Consequences.** Video QoE scales to fleet cohorts at near-zero CPU and stays
+attributable to the network. Anything requiring decoded output (VMAF-style
+perceptual scores, frame drops, decoder stalls) is explicitly out of scope; if
+ever needed it is a separate tool, not a growth of this app.

@@ -31,6 +31,10 @@ can read as far as you need and stop.
 | [Getting Started](getting-started.md) | Install, first run, reading the output. |
 | [Core Concepts](concepts.md) | The vocabulary and mental model. |
 | [Guides](guides/README.md) | How to: single-flow tests, multi-agent scenarios, choosing a datapath, securing the control plane. |
+| [The netpath seam](netpath.md) | The injectable connection factory every app dials through. |
+| [Application engines](apps.md) | Real protocol engines — voip (RTP/RTCP + MOS), http (TLS/h2), video (ABR player) — and how to place them. |
+| [Voice quality scoring](quality.md) | The ITU-T G.107 E-model pipeline behind the voip MOS numbers. |
+| [Clocks & one-way delay](clock-sync.md) | Where `owd_ms ± owd_err_ms` comes from and what the method labels mean. |
 | [Architecture](architecture.md) | Hexagonal core, data plane, control plane, telemetry, performance. |
 | [Deployment](deployment.md) | Running `loomd`/`loomctl`, security, permissions. |
 | [Reference: CLI](reference/cli.md) | Every flag and environment variable for `loom`, `loomd`, `loomctl`. |

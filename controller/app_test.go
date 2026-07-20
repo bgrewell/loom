@@ -235,6 +235,112 @@ func TestControllerPlacesAppFlows(t *testing.T) {
 	}
 }
 
+// TestControllerPlacesVideoFlows: the video kind's far end is the "http"
+// origin (the ABR player is client-only, design §2.10): the server spec
+// carries app "http" — gated against the destination agent's server side —
+// while the client spec carries app "video", and params travel verbatim to
+// both ends (the ladder configures the origin and doubles as the player's
+// expectation).
+func TestControllerPlacesVideoFlows(t *testing.T) {
+	var calls []string
+	ranAgent := &fakeAgent{name: "ran", version: "v0.12.0",
+		apps: []string{"http", "video"}, appsClient: []string{"http", "video"}, appsServer: []string{"http"},
+		networks: []string{"host"}, calls: &calls}
+	n6Agent := &fakeAgent{name: "n6", version: "v0.12.0",
+		apps: []string{"http", "video"}, appsClient: []string{"http", "video"}, appsServer: []string{"http"},
+		networks: []string{"host"}, dataPort: 8443, calls: &calls}
+	agents := map[string]*fakeAgent{"ran:9551": ranAgent, "n6:9551": n6Agent}
+
+	s := &scenario.Scenario{
+		Name: "stream",
+		Seed: 7,
+		Endpoints: []scenario.Endpoint{
+			{Name: "ran"},
+			{Name: "n6", Address: "203.0.113.9"},
+		},
+		Timeline: []scenario.Event{{
+			Name:  "binge",
+			Flow:  scenario.Flow{Kind: "video", Params: map[string]any{"ladder": "l:400k,h:2500k", "seg_duration": "4s"}},
+			From:  scenario.Selector{Raw: "ran"},
+			To:    scenario.Selector{Raw: "n6"},
+			Start: scenario.Start{Offset: 0},
+			Stop:  scenario.Stop{After: 60 * time.Second},
+		}},
+	}
+	c := New(s, map[string]string{"ran": "ran:9551", "n6": "n6:9551"}, WithDialer(fakeDialer(agents)))
+	defer c.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Run(ctx, time.Second); err != nil {
+		t.Fatalf("controller Run: %v", err)
+	}
+
+	if len(n6Agent.configured) != 1 || len(ranAgent.configured) != 1 {
+		t.Fatalf("configured n6=%d ran=%d, want 1 each", len(n6Agent.configured), len(ranAgent.configured))
+	}
+	srv, cli := n6Agent.configured[0], ranAgent.configured[0]
+	if srv.GetRole() != loomv1.FlowRole_FLOW_ROLE_APP_SERVER || srv.GetApp() != "http" {
+		t.Errorf("server role/app = %v/%q, want APP_SERVER/http (video's far end is the http origin)", srv.GetRole(), srv.GetApp())
+	}
+	if cli.GetRole() != loomv1.FlowRole_FLOW_ROLE_APP_CLIENT || cli.GetApp() != "video" {
+		t.Errorf("client role/app = %v/%q, want APP_CLIENT/video", cli.GetRole(), cli.GetApp())
+	}
+	if cli.GetTarget() != "203.0.113.9:8443" {
+		t.Errorf("client target = %q, want 203.0.113.9:8443", cli.GetTarget())
+	}
+	// The shared param grammar rides both specs verbatim.
+	for _, spec := range []*loomv1.FlowSpec{srv, cli} {
+		if spec.GetParams()["ladder"] != "l:400k,h:2500k" || spec.GetParams()["seg_duration"] != "4s" {
+			t.Errorf("%v params = %v, want the ladder/seg_duration passthrough", spec.GetRole(), spec.GetParams())
+		}
+	}
+	// Tracked under the engine actually placed on each side.
+	roles := map[Role]Placed{}
+	for _, p := range c.Placed() {
+		roles[p.Role] = p
+	}
+	if roles[AppServer].Datapath != "http" || roles[AppClient].Datapath != "video" {
+		t.Errorf("placed labels = server %q / client %q, want http / video", roles[AppServer].Datapath, roles[AppClient].Datapath)
+	}
+}
+
+// TestVideoSkewGateWantsHTTPServer: an agent whose server side lacks "http"
+// cannot be a video far end, and the refusal names the engine actually
+// missing — the http server — not the video kind (which no agent will ever
+// advertise as a server, the player being client-only).
+func TestVideoSkewGateWantsHTTPServer(t *testing.T) {
+	clientOnly := &fakeAgent{name: "n6", version: "v0.12.0",
+		apps: []string{"video"}, appsClient: []string{"video"}, networks: []string{"host"}}
+	full := &fakeAgent{name: "ran", version: "v0.12.0",
+		apps: []string{"http", "video"}, appsClient: []string{"http", "video"}, appsServer: []string{"http"},
+		networks: []string{"host"}}
+	agents := map[string]*fakeAgent{"ran:9551": full, "n6:9551": clientOnly}
+
+	s := &scenario.Scenario{
+		Name:      "stream",
+		Endpoints: []scenario.Endpoint{{Name: "ran"}, {Name: "n6"}},
+		Timeline: []scenario.Event{{
+			Name:  "binge",
+			Flow:  scenario.Flow{Kind: "video"},
+			From:  scenario.Selector{Raw: "ran"},
+			To:    scenario.Selector{Raw: "n6"},
+			Start: scenario.Start{Offset: 0},
+			Stop:  scenario.Stop{After: 30 * time.Second},
+		}},
+	}
+	c := New(s, map[string]string{"ran": "ran:9551", "n6": "n6:9551"}, WithDialer(fakeDialer(agents)))
+	defer c.Close()
+
+	err := c.Run(context.Background(), time.Second)
+	if err == nil || !strings.Contains(err.Error(), `lacks app server "http"`) {
+		t.Fatalf("error = %v, want a refusal naming the missing http server", err)
+	}
+	if len(clientOnly.configured)+len(full.configured) != 0 {
+		t.Errorf("gate must fail fast: %d flows were configured", len(clientOnly.configured)+len(full.configured))
+	}
+}
+
 // TestControllerDrivesVoipScenario is the end-to-end path over real agents:
 // a voip flow kind passes the skew gate (the agents advertise the app), places
 // the answerer + caller pair, and the server's boundary telemetry carries both

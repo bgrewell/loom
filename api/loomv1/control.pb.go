@@ -1892,7 +1892,7 @@ type VideoMetrics struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Stalls         uint64                 `protobuf:"varint,1,opt,name=stalls,proto3" json:"stalls,omitempty"`                                          // rebuffer events this interval
 	StallTimeMs    float64                `protobuf:"fixed64,2,opt,name=stall_time_ms,json=stallTimeMs,proto3" json:"stall_time_ms,omitempty"`          // total time stalled
-	RebufferRatio  float64                `protobuf:"fixed64,3,opt,name=rebuffer_ratio,json=rebufferRatio,proto3" json:"rebuffer_ratio,omitempty"`      // stall_time / play_time
+	RebufferRatio  float64                `protobuf:"fixed64,3,opt,name=rebuffer_ratio,json=rebufferRatio,proto3" json:"rebuffer_ratio,omitempty"`      // stall_time / (stall_time + play_time)
 	BufferMs       float64                `protobuf:"fixed64,4,opt,name=buffer_ms,json=bufferMs,proto3" json:"buffer_ms,omitempty"`                     // current buffer depth
 	AvgBitrateKbps float64                `protobuf:"fixed64,5,opt,name=avg_bitrate_kbps,json=avgBitrateKbps,proto3" json:"avg_bitrate_kbps,omitempty"` // average selected bitrate
 	StartupMs      float64                `protobuf:"fixed64,6,opt,name=startup_ms,json=startupMs,proto3" json:"startup_ms,omitempty"`                  // time to first frame
