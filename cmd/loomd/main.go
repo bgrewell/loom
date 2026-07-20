@@ -14,6 +14,11 @@ import (
 	"time"
 
 	"github.com/bgrewell/loom/control"
+
+	// Register the built-in app engines (self-registration into the app
+	// registries, ADR-0022's Default() set): a stock loomd advertises them via
+	// Capabilities.apps and serves them under the APP_CLIENT/APP_SERVER roles.
+	_ "github.com/bgrewell/loom/core/app/voip"
 )
 
 // Build metadata, injected at link time via -ldflags (see .goreleaser.yaml).

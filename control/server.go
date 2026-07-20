@@ -9,6 +9,7 @@ package control
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"google.golang.org/grpc"
@@ -95,13 +96,56 @@ func (s *Server) Register(_ context.Context, req *loomv1.RegisterRequest) (*loom
 }
 
 // Capabilities reports what this agent can do, from its configured components.
+// networks and apps are the version-skew gate for the app plane: consumers
+// check them at provision time and fail fast with an actionable error instead
+// of configuring a role this agent cannot run (ADR-0021: additive evolution,
+// so mixed versions degrade to clean refusals). The registries are guarded for
+// nil because embedder component sets predating them leave the fields unset.
 func (s *Server) Capabilities(context.Context, *loomv1.CapabilitiesRequest) (*loomv1.CapabilitiesResponse, error) {
-	return &loomv1.CapabilitiesResponse{
+	resp := &loomv1.CapabilitiesResponse{
 		Datapaths:  s.comps.TxDatapaths.Names(),
 		Generators: s.comps.Generators.Names(),
 		Schedulers: s.comps.Schedulers.Names(),
 		Payloads:   s.comps.Payloads.Names(),
-	}, nil
+		Apps:       s.appNames(),
+	}
+	if s.comps.AppClients != nil {
+		resp.AppsClient = s.comps.AppClients.Names()
+	}
+	if s.comps.AppServers != nil {
+		resp.AppsServer = s.comps.AppServers.Names()
+	}
+	if s.comps.Networks != nil {
+		resp.Networks = s.comps.Networks.Names()
+	}
+	return resp, nil
+}
+
+// appNames returns the union of registered app client and server names,
+// sorted — the legacy single-list `apps` field. A consumer that can gate
+// per side uses apps_client/apps_server instead (a slimmed build may carry
+// only one side of an app; the union alone can't say which).
+func (s *Server) appNames() []string {
+	seen := make(map[string]struct{})
+	if s.comps.AppClients != nil {
+		for _, n := range s.comps.AppClients.Names() {
+			seen[n] = struct{}{}
+		}
+	}
+	if s.comps.AppServers != nil {
+		for _, n := range s.comps.AppServers.Names() {
+			seen[n] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // TimeSync stamps t2 on receipt and t3 on send for the four-timestamp exchange.

@@ -136,12 +136,27 @@ func Register(c Codec) {
 	table[strings.ToLower(c.Name)] = c
 }
 
-// ByName returns the codec registered under name (case-insensitive), or an
-// error wrapping ErrUnknown that lists the registered names.
+// aliases maps common alternate codec spellings onto table names, so every
+// path that names a codec — `loom rtp --codec`, a scenario's `codec:` param,
+// an embedder's app.Options — accepts the same vocabulary. "g711" is the
+// usual way to ask for what RFC 3551 registers as PCMU/PCMA.
+var aliases = map[string]string{
+	"g711":  "pcmu",
+	"g711u": "pcmu",
+	"g711a": "pcma",
+}
+
+// ByName returns the codec registered under name (case-insensitive; the
+// g711/g711u/g711a aliases resolve to pcmu/pcma), or an error wrapping
+// ErrUnknown that lists the registered names.
 func ByName(name string) (Codec, error) {
+	key := strings.ToLower(name)
+	if canonical, ok := aliases[key]; ok {
+		key = canonical
+	}
 	mu.RLock()
 	defer mu.RUnlock()
-	c, ok := table[strings.ToLower(name)]
+	c, ok := table[key]
 	if !ok {
 		names := make([]string, 0, len(table))
 		for n := range table {

@@ -26,6 +26,11 @@ enum FlowRole {
   // bytes a requester asks for; the requester drives the behavior script.
   FLOW_ROLE_RESPONDER = 4; // binds an ephemeral port, serves requested bytes
   FLOW_ROLE_REQUESTER = 5; // drives a script, requesting objects from a responder
+  // Application pair for real protocol engines (core/app): the server binds an
+  // ephemeral port (returned as ConfigureResponse.data_port) and runs the far
+  // end of the app named in FlowSpec.app; the client drives that app toward it.
+  FLOW_ROLE_APP_CLIENT = 6; // drives the named app's client engine at an app server
+  FLOW_ROLE_APP_SERVER = 7; // binds an ephemeral port, runs the named app's server engine
 }
 
 // Control is the controller <-> agent control plane (DESIGN.md §8). It carries
@@ -78,6 +83,21 @@ message CapabilitiesResponse {
   repeated string schedulers = 3;
   repeated string payloads = 4;
   bool hardware_timestamps = 5;
+  // Registered netpath network names (e.g. "host"). Consumers check networks
+  // and apps at provision time and fail fast on version skew; all additions
+  // are additive per ADR-0021, so mixed versions degrade to clean refusals.
+  repeated string networks = 6;
+  // Registered app names (e.g. "voip"), same skew-gate contract as networks.
+  // This is the UNION of the client- and server-side registries, kept for
+  // consumers predating the per-side lists below.
+  repeated string apps = 7;
+  // Per-side app registry names: what this agent can run as APP_CLIENT and as
+  // APP_SERVER respectively. A slimmed build carrying only one side of an app
+  // advertises it on that side only, so a controller refuses placing the
+  // missing side at provision time instead of failing downstream at Configure.
+  // Absent on agents predating these fields — consumers fall back to `apps`.
+  repeated string apps_client = 8;
+  repeated string apps_server = 9;
 }
 
 // FlowSpec describes one flow to run, mirroring `loom run` flags.
@@ -103,6 +123,15 @@ message FlowSpec {
   // FLOW_ROLE_RESPONDER): "tcp" or "udp". Ignored by other roles, which use the
   // datapath field instead.
   string transport = 15;
+  // app names the application protocol engine for FLOW_ROLE_APP_CLIENT /
+  // FLOW_ROLE_APP_SERVER: "voip" | "http" | "video". Ignored by other roles.
+  string app = 16;
+  // network selects the netpath network the app's sockets are opened on;
+  // "" = "host" (the OS network stack).
+  string network = 17;
+  // local is the local address to bind for datapath-backed networks (e.g. the
+  // UE address on a gVisor netstack); "" lets the network choose.
+  string local = 18;
 
   // role selects sender vs receiver (and, later, reflector). A receiver binds an
   // ephemeral UDP port returned as ConfigureResponse.data_port and
@@ -171,6 +200,84 @@ message TelemetrySample {
   int64 interval_nanos = 9;    // measured elapsed ns of interval k (rate = interval_bytes*8/interval_nanos)
   bool final = 10;             // true on the completion sample (trailing partial interval)
   TcpInfo tcp = 11;            // sender-side TCP_INFO diagnostics (nil for non-TCP datapaths)
+  AppMetrics app = 12;         // app-layer quality metrics (nil for non-app flows)
+}
+
+// AppMetrics carries the per-interval quality metrics of an app flow
+// (FLOW_ROLE_APP_CLIENT / FLOW_ROLE_APP_SERVER); the member set matches
+// FlowSpec.app.
+message AppMetrics {
+  oneof kind {
+    VoipMetrics voip = 1;
+    HttpMetrics http = 2;
+    VideoMetrics video = 3;
+  }
+}
+
+// VoipMetrics is the RTP/RTCP receive-side quality snapshot: ITU-T G.107
+// E-model scores plus the RFC 3550 statistics they were computed from.
+//
+// Interval vs cumulative: on boundary samples, loss_pct/discard_pct (and the
+// mos_cq/r_factor scored from them) cover only the span since the previous
+// boundary — the flow sampler pattern. On the FINAL telemetry sample they are
+// scored over the whole call, so the end-of-run summary reflects whole-call
+// quality rather than the trailing partial interval. rx_packets, lost, gaps,
+// and jitter_ms are cumulative/current on every sample.
+message VoipMetrics {
+  double mos_cq = 1;      // conversational-quality MOS from r_factor
+  double r_factor = 2;    // G.107 R
+  double jitter_ms = 3;   // RFC 3550 A.8 interarrival jitter (current)
+  double loss_pct = 4;    // network loss percentage (interval; whole-call on final)
+  double discard_pct = 5; // jitter-buffer discard percentage (interval; whole-call on final)
+  double burst_r = 6;     // Gilbert burst ratio (1.0 = random loss)
+  double rtt_ms = 7;      // RFC 3550 §6.4.1 round-trip time
+  double owd_ms = 8;      // one-way delay estimate
+  double owd_err_ms = 9;  // owd error bound (owd.Tracker ErrBound)
+  string owd_method = 10; // how owd was obtained (e.g. "timesync", "rtt/2")
+  uint64 rx_packets = 11; // packets received, cumulative over the call
+  uint64 lost = 12;       // packets lost, cumulative over the call (clamped at 0)
+  repeated MediaGap gaps = 13; // loss/gap events, cumulative over the call
+  double remote_mos_cq = 14;   // far end's MOS as reported via RTCP
+  EModelBreakdown emodel = 15; // G.107 component breakdown behind r_factor
+}
+
+// EModelBreakdown exposes the ITU-T G.107 components so an R score is
+// auditable: R = ro - is - idte - idle - idd - ie_eff (+ A, not carried).
+message EModelBreakdown {
+  double ro = 1;     // basic signal-to-noise ratio
+  double is = 2;     // simultaneous impairment factor
+  double idte = 3;   // talker echo delay impairment
+  double idle = 4;   // listener echo delay impairment
+  double idd = 5;    // too-long absolute delay impairment
+  double ie_eff = 6; // effective equipment impairment (codec + loss)
+}
+
+// MediaGap is one contiguous loss/stall event in a media stream.
+message MediaGap {
+  int64 start_unix_nanos = 1;
+  int64 end_unix_nanos = 2;
+  uint32 packets_lost = 3;
+}
+
+// HttpMetrics is the requester-side HTTP/TLS quality snapshot.
+message HttpMetrics {
+  uint64 requests = 1;         // requests completed this interval
+  uint64 errors = 2;           // failed requests this interval
+  double ttfb_ms_p95 = 3;      // p95 time-to-first-byte
+  double goodput_mbps = 4;     // application-payload throughput
+  double tls_handshake_ms = 5; // TLS handshake latency
+  double connect_ms = 6;       // TCP connect latency
+}
+
+// VideoMetrics is the player-side streaming QoE snapshot.
+message VideoMetrics {
+  uint64 stalls = 1;             // rebuffer events this interval
+  double stall_time_ms = 2;      // total time stalled
+  double rebuffer_ratio = 3;     // stall_time / play_time
+  double buffer_ms = 4;          // current buffer depth
+  double avg_bitrate_kbps = 5;   // average selected bitrate
+  double startup_ms = 6;         // time to first frame
+  repeated MediaGap stall_events = 7; // individual stall intervals
 }
 
 // TcpInfo carries a snapshot of the sender socket's kernel TCP_INFO, for link

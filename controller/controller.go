@@ -22,6 +22,7 @@ import (
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
 	"github.com/bgrewell/loom/control"
 	"github.com/bgrewell/loom/core/emul"
+	"github.com/bgrewell/loom/core/metrics"
 	"github.com/bgrewell/loom/core/scenario"
 	"github.com/bgrewell/loom/core/selection"
 	"github.com/bgrewell/loom/core/timeline"
@@ -38,14 +39,23 @@ const afxdpDataPort = 9999
 type Role int
 
 // Flow roles. Sender/Receiver are the push model (one-directional); the
-// Requester/Responder pair carries request/response emulations. For telemetry,
-// the side that *receives* the download (Receiver, Requester) counts as Rx and
-// the side that *sends* it (Sender, Responder) as Tx.
+// Requester/Responder pair carries request/response emulations; the
+// AppServer/AppClient pair carries real application protocol engines
+// (core/app: voip, http, video). For telemetry, the side that *receives* the
+// download (Receiver, Requester — the driving end) counts as Rx and the side
+// that *sends* it (Sender, Responder) as Tx, so tx−rx is loss. App ends are
+// different: an app engine's Counters cover BOTH directions of its media
+// plane, so AppClient/AppServer bytes are per-end totals — folded under the
+// rx/tx buckets for display (client end = rx bucket, server end = tx bucket)
+// but never comparable as sender-vs-receiver loss; app-layer loss comes from
+// the engines' own AppMetrics.
 const (
 	Sender Role = iota
 	Receiver
 	Responder
 	Requester
+	AppServer
+	AppClient
 )
 
 // String renders a Role for display.
@@ -59,6 +69,10 @@ func (r Role) String() string {
 		return "responder"
 	case Requester:
 		return "requester"
+	case AppServer:
+		return "app-server"
+	case AppClient:
+		return "app-client"
 	default:
 		return "unknown"
 	}
@@ -77,7 +91,7 @@ type Placed struct {
 	Event     string
 	From      string
 	To        string
-	Datapath  string // udp|tcp|afxdp (or the reqresp transport) — for loss accounting
+	Datapath  string // udp|tcp|afxdp (or the reqresp transport, or the app name) — for loss accounting
 }
 
 // Key uniquely identifies a placed flow across agents.
@@ -97,6 +111,7 @@ type Controller struct {
 	rng      *rand.Rand
 	interval time.Duration // reporting interval the agents anchor their samples to
 	agents   map[string]loomv1.ControlClient
+	caps     map[string]agentCaps // agent addr -> cached Capabilities + version (skew gate)
 	closes   []func()
 
 	mu     sync.Mutex
@@ -134,6 +149,7 @@ func New(s *scenario.Scenario, addrs map[string]string, opts ...Option) *Control
 		addrs:  addrs,
 		rng:    rand.New(rand.NewSource(s.Seed)),
 		agents: make(map[string]loomv1.ControlClient),
+		caps:   make(map[string]agentCaps),
 		sync:   make(map[string]timesync.Sample),
 	}
 	for _, o := range opts {
@@ -238,6 +254,13 @@ func (c *Controller) fire(ctx context.Context, ev scenario.Event) error {
 		return err
 	}
 
+	// Application kinds (voip, and http/video once those engines land) place a
+	// real protocol engine pair: an app server on the destination agent and an
+	// app client on the source agent (core/app, FLOW_ROLE_APP_*).
+	if isAppKind(ev.Flow.Kind) {
+		return c.fireApp(ctx, ev, from, to, fromAgent, fromAddr, toAgent, toAddr)
+	}
+
 	// Request/response emulations (e.g. https-browse) need a responder/requester
 	// pair over a real connection, not the one-directional sender/receiver pair.
 	if emul.Has(ev.Flow.Kind) && emul.ModeOf(ev.Flow.Kind) == emul.ModeRequestResponse {
@@ -337,6 +360,276 @@ func (c *Controller) fireRequestResponse(ctx context.Context, ev scenario.Event,
 	return nil
 }
 
+// appMinVersion is the first loom release whose agents carry the app engines
+// (FLOW_ROLE_APP_CLIENT/APP_SERVER, CapabilitiesResponse.apps/networks). Used
+// only to word the version-skew error actionably.
+const appMinVersion = "v0.10"
+
+// appServerGrace pads the app server's duration bound past the client's: the
+// server must outlive the call so trailing media/RTCP (and the client's BYE)
+// land before it winds down. Both ends run at the same start gate, so this
+// constant only needs to cover the trailing exchange — the residual risk of
+// the two duration clocks drifting apart (a blown gate) is covered by the
+// measured-delay term appServerBound adds on top. The duration is orphan
+// protection (the far end self-terminates even if the controller dies before
+// Teardown), not the session clock — the client ends the session.
+const appServerGrace = 2 * time.Second
+
+// isAppKind reports whether a scenario flow kind names an application protocol
+// engine (core/app). The kind strings are the metrics snapshot kinds — the
+// same identifiers that travel as FlowSpec.app; http/video are accepted now
+// and light up as those engines land on the agents (until then the skew gate
+// refuses them cleanly).
+func isAppKind(kind string) bool {
+	switch kind {
+	case metrics.KindVoIP, metrics.KindHTTP, metrics.KindVideo:
+		return true
+	}
+	return false
+}
+
+// fireApp places an application flow: the app server on the destination agent
+// (binding a data port inside port_min/port_max when given) and the app client
+// on the source agent targeting it — the responder→requester ordering, because
+// the server's bound port feeds the client's Target. Both agents pass the
+// version-skew gate first, so an old loomd yields an actionable refusal
+// instead of a confusing downstream Configure failure.
+//
+// Both ends are started at ONE shared gate (fire()'s lockstep invariant): the
+// server binds its port at Configure, so it can be listening-ready while its
+// Run — which anchors both its telemetry interval clock and its duration
+// bound — waits for the same gate the client's media starts at. That keeps
+// the two ends' interval boundaries aligned for the controller's per-interval
+// consolidation, and pins the server's duration deadline to gate+d+grace so
+// it always outlives the client's gate+d call regardless of link latency
+// (a fixed pre-gate grace would be eaten by the gate slack on slow links).
+func (c *Controller) fireApp(ctx context.Context, ev scenario.Event, from, to scenario.Endpoint, fromAgent loomv1.ControlClient, fromAddr string, toAgent loomv1.ControlClient, toAddr string) error {
+	appName := ev.Flow.Kind
+	network := appNetwork(ev)
+	// The far end must be duration-bounded (orphan protection: a server whose
+	// controller crashed after Start must not hold its port forever), and the
+	// agent refuses an unbounded APP_SERVER spec — catch it here with the
+	// scenario-level fix instead of surfacing that refusal mid-placement.
+	if appDuration(ev) <= 0 {
+		return fmt.Errorf("event %q: app flow %q requires a duration bound (stop.after or a flow `duration` param)", ev.Name, appName)
+	}
+	// The agents' app path bounds a run by duration only; refuse the stop
+	// knobs it would silently drop (loom's validation style: an actionable
+	// refusal, never a silently ignored condition).
+	if ev.Stop.Count > 0 || ev.Stop.Volume > 0 {
+		return fmt.Errorf("event %q: app flow %q supports only a duration bound (stop.after); stop.count/stop.volume are not supported for app kinds", ev.Name, appName)
+	}
+	if err := c.gateApp(ctx, toAgent, toAddr, appName, network, AppServer); err != nil {
+		return fmt.Errorf("event %q: %w", ev.Name, err)
+	}
+	if err := c.gateApp(ctx, fromAgent, fromAddr, appName, network, AppClient); err != nil {
+		return fmt.Errorf("event %q: %w", ev.Name, err)
+	}
+
+	// One gate for both ends, computed before the four placement RPCs below
+	// with slack for each of them, so the gate normally opens after the last
+	// Start has landed. If a slow link blows the gate anyway, both agents
+	// degrade the same way (start on Start arrival, server first), so the
+	// server still leads the client and the grace bound still holds.
+	gate := c.appStartGate()
+
+	// App server on the destination agent; it binds at Configure (so it is
+	// reachable the moment the client's media starts) and reports the bound
+	// media/data port. Tracked immediately after Configure: a Start that fails
+	// mid-placement must still leave the flow visible to Teardown, or the
+	// configured-but-never-started server — whose duration bound only engages
+	// at Run — would hold its advertised port until the agent dies (the exact
+	// orphan the duration mandate exists to prevent).
+	srvCfg, err := toAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: appServerSpec(ev, network, c.s.Seed, c.appServerBound(ev))})
+	if err != nil {
+		return fmt.Errorf("event %q: configure app server: %w", ev.Name, err)
+	}
+	c.track(toAgent, toAddr, srvCfg.GetFlowId(), AppServer, ev.Name, from.Name, to.Name, appName)
+	if _, err := toAgent.Start(ctx, c.startReq(srvCfg.GetFlowId(), to.Name, gate)); err != nil {
+		return fmt.Errorf("event %q: start app server: %w", ev.Name, err)
+	}
+
+	// App client on the source agent, targeting the server's data address.
+	// Tracked after Configure for the same reason as the server: the voip
+	// client binds its socket eagerly at Build.
+	dataHost := to.Address
+	if dataHost == "" {
+		dataHost = hostOf(toAddr)
+	}
+	target := net.JoinHostPort(dataHost, strconv.Itoa(int(srvCfg.GetDataPort())))
+	cliCfg, err := fromAgent.Configure(ctx, &loomv1.ConfigureRequest{Flow: appClientSpec(ev, network, target, c.s.Seed)})
+	if err != nil {
+		return fmt.Errorf("event %q: configure app client: %w", ev.Name, err)
+	}
+	c.track(fromAgent, fromAddr, cliCfg.GetFlowId(), AppClient, ev.Name, from.Name, to.Name, appName)
+	if _, err := fromAgent.Start(ctx, c.startReq(cliCfg.GetFlowId(), from.Name, gate)); err != nil {
+		return fmt.Errorf("event %q: start app client: %w", ev.Name, err)
+	}
+	return nil
+}
+
+// agentCaps caches one agent's Capabilities plus its Health version, so the
+// skew gate asks each agent once per run. apps is the legacy union list;
+// appsClient/appsServer are the per-side lists (nil on agents predating
+// them, in which case the gate falls back to the union).
+type agentCaps struct {
+	apps       map[string]bool
+	appsClient map[string]bool
+	appsServer map[string]bool
+	networks   map[string]bool
+	version    string
+}
+
+// capsFor fetches (and caches) the agent's capabilities and version.
+func (c *Controller) capsFor(ctx context.Context, agent loomv1.ControlClient, addr string) (agentCaps, error) {
+	if ac, ok := c.caps[addr]; ok {
+		return ac, nil
+	}
+	caps, err := agent.Capabilities(ctx, &loomv1.CapabilitiesRequest{})
+	if err != nil {
+		return agentCaps{}, fmt.Errorf("capabilities of loomd at %s: %w", addr, err)
+	}
+	ac := agentCaps{apps: make(map[string]bool), networks: make(map[string]bool), version: "unknown version"}
+	for _, a := range caps.GetApps() {
+		ac.apps[a] = true
+	}
+	ac.appsClient = nameSet(caps.GetAppsClient())
+	ac.appsServer = nameSet(caps.GetAppsServer())
+	for _, n := range caps.GetNetworks() {
+		ac.networks[n] = true
+	}
+	// Version is only for wording the refusal; an unreachable Health keeps the
+	// gate decisive rather than failing it.
+	if h, herr := agent.Health(ctx, &loomv1.HealthRequest{}); herr == nil && h.GetVersion() != "" {
+		ac.version = h.GetVersion()
+	}
+	c.caps[addr] = ac
+	return ac, nil
+}
+
+// nameSet builds a membership set from a capability list, keeping nil for an
+// absent list so consumers can distinguish "advertises none" from "predates
+// the field".
+func nameSet(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
+}
+
+// gateApp is the version-skew gate (ADR-0021 additive evolution): before an app
+// flow is provisioned, the agent must advertise the app (and, when the flow
+// pins one, the netpath network) in its Capabilities. An old loomd predating
+// the apps field advertises none and is refused with an actionable error
+// instead of a confusing Configure failure downstream. role selects the side
+// this agent must run: an agent advertising the per-side lists is gated on
+// the matching one (a server-only slimmed build placed as the client agent
+// is refused here, not at Configure); agents predating the per-side fields
+// are gated on the union list, the best their wire version can say.
+func (c *Controller) gateApp(ctx context.Context, agent loomv1.ControlClient, addr, app, network string, role Role) error {
+	ac, err := c.capsFor(ctx, agent, addr)
+	if err != nil {
+		return err
+	}
+	side, sideName := ac.appsClient, "app client"
+	if role == AppServer {
+		side, sideName = ac.appsServer, "app server"
+	}
+	// A non-empty per-side list (either side) marks an agent that speaks the
+	// per-side wire; its side lists are then authoritative — an absent side
+	// means "cannot run that side", not "old agent". Only when both are absent
+	// (a repeated field carries no presence) do we fall back to the union.
+	if ac.appsClient != nil || ac.appsServer != nil {
+		if !side[app] {
+			return fmt.Errorf("loomd at %s (%s) lacks %s %q; run loom >= %s", addr, ac.version, sideName, app, appMinVersion)
+		}
+	} else if !ac.apps[app] {
+		return fmt.Errorf("loomd at %s (%s) lacks app %q; run loom >= %s", addr, ac.version, app, appMinVersion)
+	}
+	if network != "" && !ac.networks[network] {
+		return fmt.Errorf("loomd at %s (%s) lacks network %q; run loom >= %s", addr, ac.version, network, appMinVersion)
+	}
+	return nil
+}
+
+// appNetwork resolves the netpath network an app flow's sockets are opened on
+// (flow param `network`); "" lets the agent default to the host stack.
+func appNetwork(ev scenario.Event) string {
+	if v, ok := ev.Flow.Params["network"]; ok {
+		return fmt.Sprint(v)
+	}
+	return ""
+}
+
+// appServerBound computes the app server's duration bound: the event's
+// duration plus appServerGrace (trailing media/RTCP/BYE), plus twice the
+// slowest measured agent round trip. Both ends run at one shared gate, so
+// their duration clocks normally start together and the grace is pure slack;
+// the delay term keeps the bound safe even when a slow control link blows the
+// gate and the client's Run starts up to two RPC round trips after the
+// server's. Fake-delay-free tests (and LANs) see exactly d + appServerGrace.
+func (c *Controller) appServerBound(ev scenario.Event) time.Duration {
+	return appDuration(ev) + appServerGrace + 2*c.maxSyncDelay()
+}
+
+// appServerSpec builds the app server's FlowSpec: the far end of the app named
+// by the flow kind. Params travel verbatim (codec, jb_ms, port_min/port_max,
+// …). The server is duration-bounded whenever the client is — orphan
+// protection per the responder-role design — with bound (appServerBound) as
+// the enforced run limit so it outlives the client's call and trailing RTCP.
+func appServerSpec(ev scenario.Event, network string, seed int64, bound time.Duration) *loomv1.FlowSpec {
+	spec := &loomv1.FlowSpec{
+		Role:    loomv1.FlowRole_FLOW_ROLE_APP_SERVER,
+		App:     ev.Flow.Kind,
+		Network: network,
+		Params:  stringParams(ev.Flow.Params),
+		Seed:    seed,
+	}
+	if appDuration(ev) > 0 {
+		spec.Duration = durationpb.New(bound)
+	}
+	return spec
+}
+
+// appClientSpec builds the app client's FlowSpec: it drives the app named by
+// the flow kind at the server's data address, bounded by the event's duration
+// (stop.after wins; a `duration` flow param is the convenience fallback).
+// Count/volume stop conditions are not carried: the agents' app path enforces
+// only a duration bound, and fireApp refuses them up front rather than let a
+// scenario's stop condition silently never fire.
+func appClientSpec(ev scenario.Event, network, target string, seed int64) *loomv1.FlowSpec {
+	spec := &loomv1.FlowSpec{
+		Role:    loomv1.FlowRole_FLOW_ROLE_APP_CLIENT,
+		App:     ev.Flow.Kind,
+		Network: network,
+		Target:  target,
+		Params:  stringParams(ev.Flow.Params),
+		Seed:    seed,
+	}
+	if d := appDuration(ev); d > 0 {
+		spec.Duration = durationpb.New(d)
+	}
+	return spec
+}
+
+// appDuration resolves an app event's run bound: stop.after wins, else the
+// flow block's `duration` knob (e.g. a call length), else 0 (until stopped).
+func appDuration(ev scenario.Event) time.Duration {
+	if ev.Stop.After > 0 {
+		return ev.Stop.After
+	}
+	if v, ok := ev.Flow.Params["duration"]; ok {
+		if d, err := units.ParseDuration(fmt.Sprint(v)); err == nil {
+			return d
+		}
+	}
+	return 0
+}
+
 // startReq builds a Start request that opens flowID at the shared gate (translated
 // into endpoint's clock) and tells the agent the reporting interval to anchor its
 // boundary samples to. A zero gate means "start immediately" (responders).
@@ -365,11 +658,9 @@ func (c *Controller) agentFor(endpoint string) (loomv1.ControlClient, string, er
 	return cl, addr, nil
 }
 
-// startGate returns a shared start time (on the controller's clock) far enough in
-// the future that a Start RPC reaches every agent before the gate opens. The
-// slack scales with the slowest measured round-trip delay so even high-latency
-// links stay in lockstep; a floor covers RPC/processing on fast links.
-func (c *Controller) startGate() time.Time {
+// maxSyncDelay returns the slowest measured agent round-trip delay (0 when no
+// TimeSync has run) — the scaling term for gate slack and grace bounds.
+func (c *Controller) maxSyncDelay() time.Duration {
 	var maxDelay time.Duration
 	c.mu.Lock()
 	for _, s := range c.sync {
@@ -378,7 +669,26 @@ func (c *Controller) startGate() time.Time {
 		}
 	}
 	c.mu.Unlock()
-	return time.Now().Add(100*time.Millisecond + maxDelay)
+	return maxDelay
+}
+
+// startGate returns a shared start time (on the controller's clock) far enough in
+// the future that a Start RPC reaches every agent before the gate opens. The
+// slack scales with the slowest measured round-trip delay so even high-latency
+// links stay in lockstep; a floor covers RPC/processing on fast links.
+func (c *Controller) startGate() time.Time {
+	return time.Now().Add(100*time.Millisecond + c.maxSyncDelay())
+}
+
+// appStartGate returns the shared gate for an app pair. Unlike startGate,
+// which is computed after the flows are configured (only the Start RPCs race
+// the gate), fireApp computes its gate before any placement RPC — the
+// server's data_port must flow into the client's Configure between the two
+// Starts — so the slack covers the four placement round trips that follow
+// (server Configure/Start, client Configure/Start) with the same
+// measured-delay scaling.
+func (c *Controller) appStartGate() time.Time {
+	return time.Now().Add(100*time.Millisecond + 4*c.maxSyncDelay())
 }
 
 // startAtFor translates a controller-clock gate time into endpoint's agent clock

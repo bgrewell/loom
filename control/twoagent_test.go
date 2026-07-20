@@ -13,9 +13,12 @@ import (
 	loomv1 "github.com/bgrewell/loom/api/loomv1"
 )
 
-// agentRig is one in-process agent (control server + client).
+// agentRig is one in-process agent (control server + client). srv is the
+// underlying control Server so in-package tests can reach past the wire (e.g.
+// to observe a managed flow's engine state the proto does not carry).
 type agentRig struct {
 	client loomv1.ControlClient
+	srv    *Server
 	stop   func()
 }
 
@@ -36,6 +39,7 @@ func startAgent(t *testing.T, version string) *agentRig {
 	}
 	return &agentRig{
 		client: client,
+		srv:    srv,
 		stop:   func() { conn.Close(); gs.Stop() },
 	}
 }

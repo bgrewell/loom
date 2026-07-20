@@ -215,6 +215,17 @@ func (s *Server) Configure(ctx context.Context, req *loomv1.ConfigureRequest) (*
 		return s.configureRequester(ctx, p)
 	}
 
+	// App server: the far end of a real protocol engine (FlowSpec.app). Binds
+	// through the named netpath network and reports its port as data_port.
+	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_APP_SERVER {
+		return s.configureAppServer(p)
+	}
+
+	// App client: drives the named app's client engine at an app server.
+	if p.GetRole() == loomv1.FlowRole_FLOW_ROLE_APP_CLIENT {
+		return s.configureAppClient(p)
+	}
+
 	// Emulation sender: a behavior-script runner over the chosen datapath.
 	if p.GetEmulation() != "" {
 		return s.configureEmulation(p)
@@ -284,21 +295,37 @@ func (s *Server) configureEmulation(p *loomv1.FlowSpec) (*loomv1.ConfigureRespon
 	return &loomv1.ConfigureResponse{FlowId: id}, nil
 }
 
-// network resolves the Network request/response flows dial and listen through.
-// Until FlowSpec carries a network name it is always the registry's "host"
-// entry, resolved through s.comps so an injected component set (tests,
-// embedders) substitutes its own fabric. Component sets that predate the
+// network resolves the Network a flow dials and listens through: the entry
+// named by FlowSpec.network ("" defaults to "host"), resolved through s.comps
+// so an injected component set (tests, embedders) substitutes its own fabric.
+// A non-empty local (FlowSpec.local) is parsed as the network's source/bind
+// address (netpath.Options.Local — the UE address on a datapath-backed
+// network, an optional bind for "host"). Component sets that predate the
 // Networks registry (embedder struct literals leave the new field nil) fall
-// back to the kernel stack — the behavior before the netpath seam existed —
-// rather than dereferencing a nil registry. The caller owns the returned
-// Network and must arrange for its Close (see joinClosers).
-func (s *Server) network() (netpath.Network, error) {
-	if s.comps.Networks == nil {
-		return netpath.Host(netip.Addr{}), nil
+// back to the kernel stack for "host" — the behavior before the netpath seam
+// existed — rather than dereferencing a nil registry. The caller owns the
+// returned Network and must arrange for its Close (see joinClosers).
+func (s *Server) network(name, local string) (netpath.Network, error) {
+	if name == "" {
+		name = "host"
 	}
-	n, err := s.comps.Networks.Build("host", netpath.Options{})
+	var la netip.Addr
+	if local != "" {
+		a, err := netip.ParseAddr(local)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "local address %q: %v", local, err)
+		}
+		la = a
+	}
+	if s.comps.Networks == nil {
+		if name != "host" {
+			return nil, status.Errorf(codes.InvalidArgument, "unknown network %q (agent has no networks registry)", name)
+		}
+		return netpath.Host(la), nil
+	}
+	n, err := s.comps.Networks.Build(name, netpath.Options{Local: la})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build network: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "build network %q: %v", name, err)
 	}
 	return n, nil
 }
@@ -327,7 +354,7 @@ func (s *Server) configureResponder(p *loomv1.FlowSpec) (*loomv1.ConfigureRespon
 	if err := validateTransport(p.GetTransport()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
-	n, err := s.network()
+	n, err := s.network("", "")
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +397,7 @@ func (s *Server) configureRequester(ctx context.Context, p *loomv1.FlowSpec) (*l
 	if d := p.GetDuration(); d != nil {
 		dur = d.AsDuration()
 	}
-	n, err := s.network()
+	n, err := s.network("", "")
 	if err != nil {
 		return nil, err
 	}
@@ -508,6 +535,7 @@ func streamBoundaries(req *loomv1.TelemetryRequest, mf *managedFlow, stream loom
 				FlowId: req.GetFlowId(), Nanos: now.UnixNano(), Bytes: b, Packets: p,
 				IntervalIndex: -1, IntervalBytes: b - prevBytes, IntervalPackets: p - prevPkts,
 				IntervalNanos: now.Sub(prevTime).Nanoseconds(), Final: true, Tcp: flowTCPInfo(mf),
+				App: flowAppMetrics(mf, finalBoundary),
 			})
 		case <-timer.C:
 			b, p := c.Bytes(), c.Packets()
@@ -515,6 +543,7 @@ func streamBoundaries(req *loomv1.TelemetryRequest, mf *managedFlow, stream loom
 				FlowId: req.GetFlowId(), Nanos: boundary.UnixNano(), Bytes: b, Packets: p,
 				IntervalIndex: k, IntervalBytes: b - prevBytes, IntervalPackets: p - prevPkts,
 				IntervalNanos: boundary.Sub(prevTime).Nanoseconds(), Tcp: flowTCPInfo(mf),
+				App: flowAppMetrics(mf, k),
 			}); err != nil {
 				return err
 			}
