@@ -299,6 +299,17 @@ func (c *client) do(ctx context.Context, path string) error {
 	n, cerr := io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 	if cerr != nil && ctx.Err() != nil {
+		// The flow's own shutdown cut this transfer short. Its timings are not
+		// latencies of the path and its failure is not the path's, but the
+		// bytes already copied did cross the wire — dropping them silently
+		// understates goodput by the whole partial object, which on a short
+		// session with large objects can be most of the traffic.
+		out := snap()
+		out.Bytes = uint64(n)
+		out.Proto = resp.Proto
+		out.Aborted = true
+		c.counters.Add(uint64(n))
+		c.rec.observe(out)
 		return cerr
 	}
 	out := snap()

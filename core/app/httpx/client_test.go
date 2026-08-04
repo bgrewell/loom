@@ -158,3 +158,36 @@ func TestFactoryErrors(t *testing.T) {
 		})
 	}
 }
+
+// A transfer the flow's own shutdown cut short still moved bytes, so those
+// bytes must reach goodput — but it completed no request and failed no
+// request, so it must not appear in Requests, Errors, or the latency
+// percentiles. Dropping it entirely (the old behavior) understated goodput by
+// the whole partial object.
+func TestAbortedTransferCountsBytesOnly(t *testing.T) {
+	r := newRecorder()
+	r.observe(sample{Bytes: 1000, TTFB: 5 * time.Millisecond, Object: 10 * time.Millisecond, Proto: "HTTP/1.1"})
+	r.observe(sample{Bytes: 3_000_000, TTFB: 900 * time.Millisecond, Object: 4 * time.Second, Aborted: true})
+
+	got := r.Cumulative()
+	if got.Requests != 1 {
+		t.Errorf("Requests = %d, want 1 (the aborted transfer completed none)", got.Requests)
+	}
+	if got.Errors != 0 {
+		t.Errorf("Errors = %d, want 0 (teardown is not a path failure)", got.Errors)
+	}
+	// 3_001_000 bytes, not 1000: the partial transfer's bytes crossed the wire.
+	if wantBytes := uint64(3_001_000); r.bytes != wantBytes {
+		t.Errorf("recorded bytes = %d, want %d", r.bytes, wantBytes)
+	}
+	if got.GoodputMbps <= 0 {
+		t.Errorf("GoodputMbps = %v, want > 0", got.GoodputMbps)
+	}
+	// The aborted sample's 900ms TTFB must not pollute the percentiles.
+	if got.TTFBMsP95 != 5 {
+		t.Errorf("TTFBMsP95 = %v, want 5 (aborted sample leaked into the pool)", got.TTFBMsP95)
+	}
+	if got.ObjectMsP95 != 10 {
+		t.Errorf("ObjectMsP95 = %v, want 10 (aborted sample leaked into the pool)", got.ObjectMsP95)
+	}
+}

@@ -26,6 +26,11 @@ type sample struct {
 	Bytes        uint64
 	Proto        string // "HTTP/1.1", "HTTP/2.0"
 	Err          bool   // transport failure or non-2xx status
+	// Aborted marks a transfer the flow's own shutdown cut short. Its Bytes
+	// really crossed the wire and count toward goodput, but it completed no
+	// request and failed no request: it is neither a latency measurement nor
+	// a path error, so it stays out of the percentiles, Requests and Errors.
+	Aborted bool
 }
 
 // recorder aggregates request samples into metrics.HTTP snapshots with the
@@ -88,14 +93,18 @@ func (r *recorder) observe(s sample) {
 // deltas and elapsed wall time. Callers hold mu.
 func (r *recorder) snapshotLocked(from int, errs, bytes uint64, elapsed time.Duration) metrics.HTTP {
 	win := r.samples[from:]
-	h := metrics.HTTP{
-		Requests: uint64(len(win)),
-		Errors:   errs,
-	}
+	h := metrics.HTTP{Errors: errs}
 	var ttfb, object []float64
 	var connSum, tlsSum float64
 	var connN, tlsN int
 	for _, s := range win {
+		// An aborted transfer completed no request. Its bytes are already in
+		// the goodput numerator; counting it here would report a request that
+		// never finished.
+		if s.Aborted {
+			continue
+		}
+		h.Requests++
 		// Failed requests carry no first-byte or transfer time — their TTFB is
 		// the failure duration (anything from a ~50µs ECONNREFUSED to a 15s
 		// handshake timeout), which is not a latency of the path under test.
