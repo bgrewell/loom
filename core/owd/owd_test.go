@@ -45,18 +45,33 @@ func TestTrackerImplementsOffsetProvider(t *testing.T) {
 }
 
 func TestNewTrackerDefaults(t *testing.T) {
-	// Behavioral pin of DefaultWindow: with zero arguments the first window
-	// completes only once a feed lands DefaultWindow past the anchor.
+	// Behavioral pin of DefaultWindow: samples join the in-progress window —
+	// and can still move the estimate — until a feed lands DefaultWindow past
+	// the anchor, which retires that window's minimum into the fit.
 	tr := NewTracker(0, 0)
 	t0 := time.Unix(1700000000, 0)
-	s := timesync.Sample{Offset: time.Millisecond, Delay: 4 * time.Millisecond}
-	tr.Feed(s, t0)
-	tr.Feed(s, t0.Add(DefaultWindow-time.Second))
 	if _, _, ok := tr.Offset(); ok {
-		t.Fatal("ok=true before the default window completed")
+		t.Fatal("ok=true on an empty tracker")
 	}
-	tr.Feed(s, t0.Add(DefaultWindow))
-	if _, _, ok := tr.Offset(); !ok {
+	tr.Feed(timesync.Sample{Offset: time.Millisecond, Delay: 4 * time.Millisecond}, t0)
+
+	// Still inside the first window: a lower-delay exchange displaces the
+	// estimate, because nothing has been retired into the fit yet.
+	inWindow := timesync.Sample{Offset: 3 * time.Millisecond, Delay: 2 * time.Millisecond}
+	tr.Feed(inWindow, t0.Add(DefaultWindow-time.Second))
+	if off, _, ok := tr.Offset(); !ok || off != inWindow.Offset {
+		t.Fatalf("in-progress window: offset = %v (ok=%v), want %v", off, ok, inWindow.Offset)
+	}
+
+	// At DefaultWindow that window completes and its minimum is retired into
+	// the fit. The sample that completes it belongs to the NEXT window, so it
+	// no longer moves the estimate despite carrying the lowest delay yet.
+	tr.Feed(timesync.Sample{Offset: 50 * time.Millisecond, Delay: time.Millisecond}, t0.Add(DefaultWindow))
+	off, _, ok := tr.Offset()
+	if !ok {
 		t.Fatal("ok=false after the default window completed")
+	}
+	if off != inWindow.Offset {
+		t.Fatalf("after completion: offset = %v, want the retired window minimum %v", off, inWindow.Offset)
 	}
 }

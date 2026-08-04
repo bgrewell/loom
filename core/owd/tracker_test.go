@@ -36,7 +36,10 @@ func absDuration(d time.Duration) time.Duration {
 	return d
 }
 
-func TestTrackerNotReadyBeforeFirstWindow(t *testing.T) {
+// An empty tracker has measured nothing and must say so; one exchange is
+// already a measured offset and is reported with the delay/2 bound rather than
+// being withheld (which would drop the consumer to the rtt/2 tier).
+func TestTrackerEstimatesFromFirstSample(t *testing.T) {
 	tr := NewTracker(10*time.Second, 4)
 	t0 := time.Unix(1700000000, 0)
 	if _, _, ok := tr.Offset(); ok {
@@ -45,13 +48,44 @@ func TestTrackerNotReadyBeforeFirstWindow(t *testing.T) {
 	s := timesync.Sample{Offset: 2 * time.Millisecond, Delay: 6 * time.Millisecond}
 	for _, dt := range []time.Duration{0, 3 * time.Second, 6 * time.Second, 9 * time.Second} {
 		tr.Feed(s, t0.Add(dt))
-		if _, _, ok := tr.Offset(); ok {
-			t.Fatalf("ok=true at %v into the first window", dt)
+		off, eb, ok := tr.Offset()
+		if !ok {
+			t.Fatalf("ok=false at %v into the first window", dt)
+		}
+		if off != s.Offset {
+			t.Errorf("at %v: offset = %v, want %v", dt, off, s.Offset)
+		}
+		if want := s.Delay / 2; eb != want {
+			t.Errorf("at %v: errBound = %v, want delay/2 = %v", dt, eb, want)
 		}
 	}
 	tr.Feed(s, t0.Add(10*time.Second))
 	if _, _, ok := tr.Offset(); !ok {
 		t.Fatal("ok=false after the first window completed")
+	}
+}
+
+// The pre-window estimate applies the same minimum-delay filter the completed
+// windows do, so a queuing-polluted exchange does not displace a cleaner one.
+func TestTrackerEarlyEstimateUsesWindowMinimum(t *testing.T) {
+	tr := NewTracker(30*time.Second, 8)
+	t0 := time.Unix(1700000000, 0)
+	clean := timesync.Sample{Offset: 2 * time.Millisecond, Delay: 1 * time.Millisecond}
+	noisy := timesync.Sample{Offset: 9 * time.Millisecond, Delay: 40 * time.Millisecond}
+
+	tr.Feed(noisy, t0)
+	tr.Feed(clean, t0.Add(time.Second))
+	tr.Feed(noisy, t0.Add(2*time.Second))
+
+	off, eb, ok := tr.Offset()
+	if !ok {
+		t.Fatal("ok=false with samples in the first window")
+	}
+	if off != clean.Offset {
+		t.Errorf("offset = %v, want the min-delay sample's %v", off, clean.Offset)
+	}
+	if want := clean.Delay / 2; eb != want {
+		t.Errorf("errBound = %v, want %v", eb, want)
 	}
 }
 
