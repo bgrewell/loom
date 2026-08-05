@@ -551,10 +551,27 @@ func TestArrivalMetaJitter(t *testing.T) {
 		return &delayNet{Network: n, after: 20, every: 2, delay: 25 * time.Millisecond}
 	})
 
-	if meta >= 8 {
-		t.Errorf("JitterMs with meta stamps = %.2f, want < 8 (dequeue delay must not count as jitter)", meta)
+	// Bound the SEPARATION, not an absolute floor on `meta`.
+	//
+	// `meta` is the pacer's scheduling-noise floor, which is a property of the
+	// machine, not of the seam: measured here over 12 runs it sits at 6.3–8.3 ms
+	// quiet and under load, and a CI runner observed 9.35 — which is what a
+	// hardcoded `meta < 8` was failing on while nothing was wrong. `plain`, by
+	// contrast, is dominated by the injected delay rather than by noise and
+	// barely moves (14.9–15.9 ms across the same runs).
+	//
+	// So the honest invariant is that the injected delay shows up in one
+	// measurement and not the other. That survives a raised noise floor, which
+	// lifts `meta` toward `plain` without erasing the gap. The mutation stays
+	// killed: were rxLoop to ignore ReadFromMeta and stamp at dequeue, `meta`
+	// would rise to `plain`'s level and the separation would collapse to ~0.
+	if plain < 10 {
+		t.Errorf("jitter without meta stamps = %.2f, want > 10 (control: a %v dequeue delay "+
+			"must register as jitter when arrival is stamped at dequeue)", plain, 25*time.Millisecond)
 	}
-	if plain <= 10 {
-		t.Errorf("JitterMs without meta stamps = %.2f, want > 10 (control: delays visible at dequeue)", plain)
+	if sep := plain - meta; sep < 4 {
+		t.Errorf("jitter with meta stamps = %.2f, without = %.2f (separation %.2f, want > 4): "+
+			"the injected %v dequeue delay must be invisible when arrival is stamped at the wire",
+			meta, plain, sep, 25*time.Millisecond)
 	}
 }
