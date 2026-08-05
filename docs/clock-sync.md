@@ -43,6 +43,14 @@ four-timestamp exchanges (`core/timesync`, RFC 5905 §8 style):
   delay/2). On a testbed LAN this lands comfortably under a millisecond,
   which is ample: the E-model's delay impairment doesn't even wake up until
   100 ms.
+- **Usable from the first exchange.** Before any window has completed there
+  is nothing to fit, so the estimate degenerates to the current window's
+  minimum-delay exchange with a zero residual — the same formula over one
+  point, bound = delay/2. Withholding it would not leave the caller with no
+  number; it would drop the session to the `rtt/2` tier *over the path under
+  test*, which is both wider and biased by the very asymmetry being measured.
+  A short call therefore reports measured OWD for its whole life instead of
+  spending its first window on a guess.
 
 ### `rtt/2` — the labeled guess
 

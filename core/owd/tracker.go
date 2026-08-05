@@ -39,7 +39,10 @@ type minimum struct {
 //
 // Offset evaluates the drift model at the most recently fed sample's time;
 // feed exchanges regularly, as the bound does not cover drift accumulated
-// after the last exchange. Samples with a negative round-trip delay are
+// after the last exchange. Until the first window completes it reports the
+// in-progress window's minimum-delay exchange instead, so a session shorter
+// than one window still gets a measured offset rather than falling back to
+// its caller's rtt/2 tier. Samples with a negative round-trip delay are
 // discarded as invalid. A Tracker is safe for concurrent use.
 type Tracker struct {
 	mu     sync.Mutex
@@ -118,11 +121,24 @@ func (t *Tracker) retire(m minimum) {
 // [OffsetProvider]. The value is the least-squares offset-drift line over the
 // retained window minima evaluated at that time; the bound is the fit's
 // largest absolute residual plus half the smallest round-trip delay among the
-// minima. ok is false until the first window has completed.
+// minima. ok is false only until the first sample arrives.
+//
+// Before any window has completed there is nothing to fit, and the estimate
+// degenerates to the current window's minimum-delay exchange with a zero
+// residual — the same formula, one point. Rationale: withholding an estimate
+// here does not leave the consumer with no number, it drops it to the rtt/2
+// tier over the path under test, which carries a wider bound and is biased by
+// the very asymmetry being measured. One four-timestamp exchange is a
+// measured offset whose error is at most delay/2 (RFC 5905 §8), so reporting
+// it labeled "timesync" is both more accurate and more honest than the
+// fallback it displaces.
 func (t *Tracker) Offset() (offset, errBound time.Duration, ok bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(t.minima) == 0 {
+		if t.winHas {
+			return t.winMin.offset, t.winMin.delay / 2, true
+		}
 		return 0, 0, false
 	}
 
