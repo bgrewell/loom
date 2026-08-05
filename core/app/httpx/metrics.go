@@ -79,13 +79,31 @@ func (r *recorder) runStopped() {
 }
 
 // observe appends one completed request.
+//
+// It deliberately does NOT add the sample's bytes to the running total:
+// addBytes credits those as the body is read, so counting them again here
+// would double them. sample.Bytes stays as the per-request record.
 func (r *recorder) observe(s sample) {
 	r.mu.Lock()
 	r.samples = append(r.samples, s)
 	if s.Err {
 		r.errs++
 	}
-	r.bytes += s.Bytes
+	r.mu.Unlock()
+}
+
+// addBytes credits bytes as they are transferred, which is what makes an
+// interval's goodput the bytes that crossed the wire during it. Crediting a
+// whole object at completion instead put every byte in the one interval where
+// the request finished — so a transfer longer than the sampling interval read
+// as zero throughput throughout and a spike at the end, and the across-member
+// median of a large-object cohort sat at 0 while its p95 showed the real rate.
+func (r *recorder) addBytes(n uint64) {
+	if n == 0 {
+		return
+	}
+	r.mu.Lock()
+	r.bytes += n
 	r.mu.Unlock()
 }
 

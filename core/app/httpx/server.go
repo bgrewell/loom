@@ -304,9 +304,9 @@ func (s *origin) Run(ctx context.Context) error {
 // recorder.
 func (s *origin) counted(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cw := &countingWriter{ResponseWriter: w, status: http.StatusOK}
+		cw := &countingWriter{ResponseWriter: w, status: http.StatusOK, acct: &s.counters, rec: s.rec}
 		next.ServeHTTP(cw, r)
-		s.counters.Add(cw.n)
+		s.counters.AddPacket()
 		// A transfer whose body write failed (client gone, flow stopped
 		// mid-request) is not a served response: without cw.failed it would be
 		// recorded as a clean 200 with partial bytes, making the origin's
@@ -322,6 +322,8 @@ type countingWriter struct {
 	n      uint64
 	status int
 	failed bool
+	acct   *accounting.Counters
+	rec    *recorder
 }
 
 // WriteHeader implements http.ResponseWriter.
@@ -334,6 +336,14 @@ func (w *countingWriter) WriteHeader(code int) {
 func (w *countingWriter) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 	w.n += uint64(n)
+	// Credited as the response is written, not when the handler returns: a
+	// response larger than the sampling interval otherwise contributes nothing
+	// to the intervals that carried it and everything to the one where it
+	// ended, so the origin reported no throughput for the whole transfer.
+	if n > 0 && w.acct != nil {
+		w.acct.AddBytes(uint64(n))
+		w.rec.addBytes(uint64(n))
+	}
 	if err != nil {
 		w.failed = true
 	}
