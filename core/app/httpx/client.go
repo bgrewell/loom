@@ -25,6 +25,19 @@ import (
 	"github.com/bgrewell/loom/core/units"
 )
 
+// streamSink credits a response body to the flow's counters as it is read.
+// io.Discard would throw the bytes away without telling anyone how many had
+// moved yet, which is precisely what made a long transfer invisible until it
+// finished.
+type streamSink struct{ c *client }
+
+func (s streamSink) Write(p []byte) (int, error) {
+	n := len(p)
+	s.c.counters.AddBytes(uint64(n))
+	s.c.rec.addBytes(uint64(n))
+	return n, nil
+}
+
 // errPause is the minimum inter-request pause after a failed request when the
 // think distribution sampled (near) zero, so a dead origin costs retries per
 // errPause instead of a hot spin for the rest of the flow.
@@ -296,7 +309,8 @@ func (c *client) do(ctx context.Context, path string) error {
 		c.rec.observe(out)
 		return err
 	}
-	n, cerr := io.Copy(io.Discard, resp.Body)
+	// Credited as the body arrives, not at completion — see recorder.addBytes.
+	n, cerr := io.Copy(streamSink{c: c}, resp.Body)
 	_ = resp.Body.Close()
 	if cerr != nil && ctx.Err() != nil {
 		// The flow's own shutdown cut this transfer short. Its timings are not
@@ -308,7 +322,7 @@ func (c *client) do(ctx context.Context, path string) error {
 		out.Bytes = uint64(n)
 		out.Proto = resp.Proto
 		out.Aborted = true
-		c.counters.Add(uint64(n))
+		c.counters.AddPacket()
 		c.rec.observe(out)
 		return cerr
 	}
@@ -322,7 +336,7 @@ func (c *client) do(ctx context.Context, path string) error {
 	if cerr != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		out.Err = true
 	}
-	c.counters.Add(uint64(n))
+	c.counters.AddPacket()
 	c.rec.observe(out)
 	if cerr != nil {
 		return cerr

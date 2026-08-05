@@ -12,6 +12,8 @@ import (
 	"github.com/bgrewell/loom/core/app"
 	"github.com/bgrewell/loom/core/metrics"
 	"github.com/bgrewell/loom/core/netpath"
+
+	"github.com/bgrewell/loom/core/accounting"
 )
 
 // TestObjectSizeDistRespected: with object_size "1KB..2KB" every generated
@@ -166,7 +168,13 @@ func TestFactoryErrors(t *testing.T) {
 // the whole partial object.
 func TestAbortedTransferCountsBytesOnly(t *testing.T) {
 	r := newRecorder()
+	// Bytes are credited as each body streams (recorder.addBytes); observe
+	// records what the request WAS. The aborted transfer's bytes were already
+	// on the wire by the time it was cut short, so they are credited the same
+	// way — the flag governs the request and latency accounting, not the bytes.
+	r.addBytes(1000)
 	r.observe(sample{Bytes: 1000, TTFB: 5 * time.Millisecond, Object: 10 * time.Millisecond, Proto: "HTTP/1.1"})
+	r.addBytes(3_000_000)
 	r.observe(sample{Bytes: 3_000_000, TTFB: 900 * time.Millisecond, Object: 4 * time.Second, Aborted: true})
 
 	got := r.Cumulative()
@@ -189,5 +197,55 @@ func TestAbortedTransferCountsBytesOnly(t *testing.T) {
 	}
 	if got.ObjectMsP95 != 10 {
 		t.Errorf("ObjectMsP95 = %v, want 10 (aborted sample leaked into the pool)", got.ObjectMsP95)
+	}
+}
+
+// Goodput must reflect the bytes that crossed the wire during an interval, not
+// the bytes of whatever requests happened to finish in it. Crediting a whole
+// object at completion made a transfer longer than the sampling interval read
+// as zero throughput throughout and a spike at the end — which, across a
+// cohort of large-object clients, put the median at 0 while the p95 showed the
+// real rate.
+func TestGoodputCreditsBytesAsTheyTransfer(t *testing.T) {
+	r := newRecorder()
+	r.runStarted()
+
+	// A transfer in progress: bytes have moved, no request has completed.
+	r.addBytes(500_000)
+	mid := r.Metrics()
+	if mid.Requests != 0 {
+		t.Errorf("Requests = %d mid-transfer, want 0 (nothing has completed)", mid.Requests)
+	}
+	if mid.GoodputMbps <= 0 {
+		t.Error("goodput is zero while a transfer is in flight — the interval carried bytes")
+	}
+
+	// Completing the request must not credit the same bytes a second time.
+	r.observe(sample{Bytes: 500_000, TTFB: time.Millisecond, Object: 10 * time.Millisecond})
+	if got := r.bytes; got != 500_000 {
+		t.Errorf("total bytes = %d after completion, want 500000 — completion double-counted the stream", got)
+	}
+	done := r.Metrics()
+	if done.Requests != 1 {
+		t.Errorf("Requests = %d, want 1", done.Requests)
+	}
+}
+
+// The counters split cleanly: bytes accrue as the stream moves, packets on
+// completed transfers. Using Add for each chunk would have counted every 32KB
+// buffer as a packet.
+func TestCountersSeparateBytesFromPackets(t *testing.T) {
+	var c accounting.Counters
+	c.AddBytes(1000)
+	c.AddBytes(2000)
+	if got := c.Packets(); got != 0 {
+		t.Errorf("packets = %d after byte-only credits, want 0", got)
+	}
+	c.AddPacket()
+	if got, want := c.Bytes(), uint64(3000); got != want {
+		t.Errorf("bytes = %d, want %d", got, want)
+	}
+	if got := c.Packets(); got != 1 {
+		t.Errorf("packets = %d after one completed transfer, want 1", got)
 	}
 }

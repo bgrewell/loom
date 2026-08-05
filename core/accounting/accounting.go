@@ -25,6 +25,18 @@ func (c *Counters) Add(nbytes uint64) {
 	c.packets.Add(1)
 }
 
+// AddBytes records bytes without a packet, for a stream that is credited as it
+// is transferred rather than per datagram. A byte-stream app knows how much
+// has moved long before it knows the transfer is over; crediting it only at
+// completion makes an interval rate a function of when requests happen to
+// finish rather than of what crossed the wire, which reads as zero throughput
+// for the whole of a long transfer and a spike at the end.
+func (c *Counters) AddBytes(nbytes uint64) { c.bytes.Add(nbytes) }
+
+// AddPacket records one packet — for a stream app, one completed transfer —
+// without bytes, which AddBytes has already credited.
+func (c *Counters) AddPacket() { c.packets.Add(1) }
+
 // Bytes returns the total bytes counted.
 func (c *Counters) Bytes() uint64 { return c.bytes.Load() }
 
