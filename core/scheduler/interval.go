@@ -64,18 +64,36 @@ func (i *Interval) Pace(ctx context.Context, max int) (int, bool) {
 			return n, true
 		}
 	}
-	// Nothing due yet: wait until the next packet's send time, then release one.
-	if !i.waitUntil(ctx, i.next) {
+	// Nothing due yet. Wait until a batch's worth of send times have passed,
+	// then release them together, so a fast sender sleeps between bursts rather
+	// than waking (and spinning) once per packet. When the per-packet gap is
+	// below the spin window, the old per-packet wait spun a whole core per flow
+	// — a rate-limited sender cost ~10x the CPU it should. maxBurst caps the
+	// burst so pacing stays smooth and loss testing stays accurate.
+	const maxBurst = 2 * time.Millisecond
+	target := i.next.Add(time.Duration(max-1) * i.every)
+	if c := i.now().Add(maxBurst); target.After(c) {
+		target = c
+	}
+	if !i.waitUntil(ctx, target) {
 		return 0, false
 	}
-	i.next = i.next.Add(i.every)
-	return 1, true
+	now = i.now()
+	for n < max && !i.next.After(now) {
+		n++
+		i.next = i.next.Add(i.every)
+	}
+	if n == 0 { // woke a hair early: release one rather than spin again
+		n = 1
+		i.next = i.next.Add(i.every)
+	}
+	return n, true
 }
 
 // waitUntil sleeps coarsely to within a spin window of deadline, then busy-waits
 // the remainder for microsecond accuracy. Returns false if ctx is cancelled.
 func (i *Interval) waitUntil(ctx context.Context, deadline time.Time) bool {
-	const spin = 200 * time.Microsecond
+	const spin = 50 * time.Microsecond
 	if d := deadline.Sub(i.now()); d > spin {
 		t := time.NewTimer(d - spin)
 		select {
