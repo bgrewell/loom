@@ -46,10 +46,21 @@ func TestIntervalReleasesOverTime(t *testing.T) {
 	ctx := context.Background()
 	start := time.Now()
 	const n = 5
-	for k := 0; k < n; k++ {
-		if got, ok := i.Pace(ctx, 64); !ok || got != 1 {
-			t.Fatalf("pace %d = (%d,%v), want (1,true)", k, got, ok)
+	// Batching means a wake that lands late releases every slot that came due in
+	// the meantime, so a single Pace can return more than one; request only the
+	// packets still outstanding and accumulate rather than assuming one per call.
+	// The rate floor still holds: the nth slot's send time is (n-1) intervals
+	// out, so it cannot be released before then regardless of batching.
+	got := 0
+	for got < n {
+		m, ok := i.Pace(ctx, n-got)
+		if !ok {
+			t.Fatalf("Pace returned !ok after %d/%d packets", got, n)
 		}
+		if m < 1 {
+			t.Fatalf("Pace released %d packets, want >= 1", m)
+		}
+		got += m
 	}
 	if elapsed := time.Since(start); elapsed < 6*time.Millisecond {
 		t.Fatalf("releasing %d packets took %v, expected the interval to pace it", n, elapsed)
